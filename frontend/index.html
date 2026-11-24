@@ -15,8 +15,8 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/css/style.css?v=LOO1-20261124-model-v1">
-  <link rel="icon" type="image/svg+xml" href="/assets/motphys-icon.svg?v=LOO1-20261124-model-v1">
+  <link rel="stylesheet" href="/css/style.css?v=LOO1-20261124-navigation-v2">
+  <link rel="icon" type="image/svg+xml" href="/assets/motphys-icon.svg?v=LOO1-20261124-navigation-v2">
 </head>
 <body>
 
@@ -24,17 +24,17 @@
   <header class="top-header">
     <div class="brand-section">
       <a href="/" class="brand-logo" title="Motphys Robot Web">
-        <img class="motphys-brand-asset" src="/assets/motphys-logo.svg?v=LOO1-20261124-model-v1" alt="Motphys Logo" width="124" height="20">
+        <img class="motphys-brand-asset" src="/assets/motphys-logo.svg?v=LOO1-20261124-navigation-v2" alt="Motphys Logo" width="124" height="20">
         <span class="loop-wordmark">Loop</span>
       </a>
       <nav class="primary-nav" aria-label="主导航">
-        <button class="tab-btn" data-tab="overview">Dashboard</button>
-        <button class="tab-btn" data-tab="actions" aria-selected="true">Actions</button>
-        <button class="tab-btn" data-tab="joints">Joints / 3D</button>
-        <button class="tab-btn" data-tab="navigation" id="tabBtnNav">Navigation</button>
-        <button class="tab-btn" data-tab="perception">Perception</button>
-        <button class="tab-btn" data-tab="policy">Policies</button>
-        <button class="tab-btn" data-tab="diagnostics">Diagnostics</button>
+        <button class="tab-btn" data-tab="overview">总览</button>
+        <button class="tab-btn" data-tab="actions" aria-selected="true">动作与工作流</button>
+        <button class="tab-btn" data-tab="joints">关节 / 3D</button>
+        <button class="tab-btn" data-tab="navigation" id="tabBtnNav">地图导航</button>
+        <button class="tab-btn" data-tab="perception">视觉感知</button>
+        <button class="tab-btn" data-tab="policy">策略评测</button>
+        <button class="tab-btn" data-tab="diagnostics">安全诊断</button>
       </nav>
     </div>
 
@@ -85,7 +85,8 @@
 
   <section class="workspace-context" aria-label="工作区上下文">
     <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><span>Robot Web</span><span aria-hidden="true">/</span><strong id="currentSectionCrumb">动作与工作流</strong></div>
-    <div class="mock-disclosure" role="note"><span id="uiBuildId">LOO1-20261124-model-v1</span> · LOCAL MOCK · 无真实机器人连接</div>
+    <div class="mock-disclosure" role="note"><span id="uiBuildId">LOO1-20261124-navigation-v2</span> · LOCAL MOCK · 无真实机器人连接</div>
+    <div id="featureAvailabilityNote" class="feature-availability-note" role="status"></div>
   </section>
 
   <!-- App Main Content Panes -->
@@ -164,6 +165,6 @@
   </div>
 
   <!-- Entry Script -->
-  <script type="module" src="/js/app.js?v=LOO1-20261124-model-v1"></script>
+  <script type="module" src="/js/app.js?v=LOO1-20261124-navigation-v2"></script>
 </body>
 </html>

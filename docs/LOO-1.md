@@ -111,3 +111,12 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 - 修改文件用途：app.py缓存验证头；mock.py如实声明W1静态模型；index/app/build CSS可见版本和直接验收入口；joints/model modules真实只读渲染并删除假骨架；5个vendor依赖、21资产与manifest构成最小离线依赖；测试与本文记录验证/来源。回退新建本批revert，不强推；保留之前后端安全修复。Mac没有写入、部署或同步。
 
 预览状态补充：已仅重启 box 的8096 Mock服务使新模型能力与 no-cache 验证头生效，loopback实测正确；8097未重启，虽静态文件同根，Python描述符仍可能旧，统一用8096验收。不涉及Mac服务。
+
+## 14:37 Asia/Shanghai 功能入口恢复（navigation-v2）
+
+- 根因已定位：`app.js::_updateCapabilitiesUI` 不仅按能力 `hidden/display:none`，还额外重复隐藏 Navigation。用户选择 W1 时 navigation/policy 都为 false，故整项消失；感知入口误仅判断 head_depth/YOLO/ArUco，忽略 W1/Piper 明明具有 `cameras=true`。不是模块文件丢失。原子动作库仍在 Actions 内，但英文 Actions/Atomic actions/Jobs 的层级容易被误解为 Jobs 替代了动作库。
+- 修复为始终保留唯一一套七项全局入口：总览、动作与工作流、关节/3D、地图导航、视觉感知、策略评测、安全诊断。无能力的入口 disabled 并提供具体原因、建议切换的机型，页面也显示原因；不隐藏、不造假能力。R1 可进导航，W1/Piper 导航禁用；W1 策略禁用，Piper/R1 策略可用。相机存在即可进入视觉感知，内部未支持的深度/YOLO/6D/ArUco启动按钮禁用。
+- Actions 清晰保留三个互不替代的真实页面：原子动作库（真实 listActions/创建/导入/删除）、工作流编排（listWorkflows/已有 Dry-run/受控 Mock 执行）、执行任务记录（listJobs/详情）。新增 `section=actions|workflows|jobs|r1pro` 直达链接，切机刷新当前二级页，原地图/感知/策略模块代码继续保留。未新造原子动作直接执行API或真实硬件能力。
+- 新增 `navigation-state.js` 统一能力可达性，`test_navigation_access.mjs` 验证七入口不消失、三机型矩阵、相机-only感知、禁用原因、切机恢复及原子/流程/任务分立。W1真实模型、品牌及安全后端无改动。build 标识更新为 `LOO1-20261124-navigation-v2`。
+- 验收URL：`/?tab=navigation&robot=r1pro-mock` 地图导航；`/?tab=actions&section=actions&robot=r1pro-mock` 原子动作；section=workflows 为流程、section=jobs 为记录；`/?tab=perception&robot=dex-w1-mock` W1相机入口；`/?tab=policy&robot=piper-dual-mock` Piper策略。浏览器视觉验收仍由父代理进行。用户图片为父代理私有附件，子代理 Read 被拒，未绕过；以上依据实际源码定位。
+- 文件目的：index/app/nav-state恢复完整可见入口和守卫；actions明确二级页及直达/切机更新；perception区分相机能力与算法启动；CSS禁用样式/说明；测试和本文记录回归。回退仅revert本修复，不回退安全/模型/品牌修复。若同步Mac，只备份并部署这些已测增量，保留全部配置和已有Mock数据；不在Mac开发。

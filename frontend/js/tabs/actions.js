@@ -6,16 +6,18 @@ import { escapeHtml, formatLocalTime, filterJobs } from "../ui-format.js";
 export function initActionsTab(container) {
   let jobsRequest = 0;
   let lastJobsSignature = "";
+  let activeSub = "jobs";
+  let lastRobotId = api.currentRobotId;
   container.innerHTML = `
     <section class="execution-heading-card">
-      <div class="execution-title-row"><div><h1>Loop Actions</h1></div><span class="workspace-readonly">MOCK ONLY · 默认只读</span></div>
+      <div class="execution-title-row"><div><h1>Loop Actions · 动作与工作流</h1></div><span class="workspace-readonly">MOCK ONLY · 默认只读</span></div>
     <!-- Sub navigation for Actions Tab -->
     <div class="execution-subtabs">
       <div style="display:flex; gap:8px;">
-        <button class="btn btn-sm sub-tab-btn" data-sub="jobs" aria-selected="true" style="background:var(--accent-light); color:var(--accent);">Jobs</button>
-        <button class="btn btn-sm sub-tab-btn" data-sub="workflows">Workflows</button>
-        <button class="btn btn-sm sub-tab-btn" data-sub="actions">Atomic actions</button>
-        <button class="btn btn-sm sub-tab-btn" data-sub="r1pro">Import / Export</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="jobs" aria-selected="true" style="background:var(--accent-light); color:var(--accent);">执行任务记录</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="workflows">工作流编排</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="actions">原子动作</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="r1pro">R1 导入 / 导出</button>
       </div>
       <div>
         <button class="btn btn-sm btn-primary" id="newActionOrWfBtn">+ 新建原子动作</button>
@@ -175,26 +177,21 @@ export function initActionsTab(container) {
     r1pro: container.querySelector("#subViewR1Pro"),
   };
 
-  subBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-      const sub = btn.getAttribute("data-sub");
-      subBtns.forEach(b => {
-        b.setAttribute("aria-selected", b === btn ? "true" : "false");
-        b.style.background = "";
-        b.style.color = "";
-      });
-      btn.style.background = "var(--accent-light)";
-      btn.style.color = "var(--accent)";
-
-      Object.entries(subViews).forEach(([k, el]) => {
-        el.style.display = k === sub ? "block" : "none";
-      });
-
-      if (sub === "jobs") _loadJobs();
-      if (sub === "workflows") _loadWorkflows();
-      if (sub === "actions") _loadActions();
+  function showSubView(sub) {
+    if (!subViews[sub]) return;
+    activeSub = sub;
+    subBtns.forEach(button => {
+      const selected = button.getAttribute("data-sub") === sub;
+      button.setAttribute("aria-selected", String(selected));
+      button.style.background = selected ? "var(--accent-light)" : "";
+      button.style.color = selected ? "var(--accent)" : "";
     });
-  });
+    Object.entries(subViews).forEach(([key,element]) => {element.style.display = key === sub ? "block" : "none";});
+    if (sub === "jobs") _loadJobs();
+    if (sub === "workflows") _loadWorkflows();
+    if (sub === "actions") _loadActions();
+  }
+  subBtns.forEach(button => button.addEventListener("click", () => showSubView(button.getAttribute("data-sub"))));
 
   // Action Dialog
   const actionDialog = container.querySelector("#actionEditDialog");
@@ -442,11 +439,16 @@ export function initActionsTab(container) {
     }
   });
 
-  // Initial load
-  _loadJobs();
+  // Direct links preserve the independent catalog/workflow/jobs pages.
+  const requestedSection = new URLSearchParams(window.location.search).get("section");
+  showSubView(subViews[requestedSection] ? requestedSection : "jobs");
 
   return {
     update(state) {
+      if (lastRobotId !== api.currentRobotId) {
+        lastRobotId = api.currentRobotId;
+        showSubView(activeSub);
+      }
       const signature = JSON.stringify([state?.descriptor?.id, (state?.recent_jobs || []).map(j => [j.job_id, j.state])]);
       if (signature !== lastJobsSignature) {
         lastJobsSignature = signature;

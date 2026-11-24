@@ -1,8 +1,9 @@
 // Motphys Robot Web — Main Application Controller
 import { api } from "./api.js";
 import { drawer } from "./drawer.js";
+import { featureAvailability, applyFeatureNavigation } from "./navigation-state.js";
 import { initOverviewTab } from "./tabs/overview.js";
-import { initJointsTab } from "./tabs/joints.js?v=LOO1-20261124-model-v1";
+import { initJointsTab } from "./tabs/joints.js?v=LOO1-20261124-navigation-v2";
 import { initActionsTab } from "./tabs/actions.js";
 import { initNavigationTab } from "./tabs/navigation.js";
 import { initPerceptionTab } from "./tabs/perception.js";
@@ -65,6 +66,10 @@ class MotphysRobotApp {
 
   switchTab(tabName) {
     if (!this.tabs[tabName]) return;
+    if (this.featureState?.[tabName]?.enabled === false) {
+      this._showToast(this.featureState[tabName].reason, "info");
+      return;
+    }
     this.activeTabName = tabName;
 
     // Update buttons
@@ -254,30 +259,14 @@ class MotphysRobotApp {
 
   _updateCapabilitiesUI(caps) {
     if (!caps) return;
-    const supported = {navigation: caps.navigation, policy: caps.policy_inference,
-      perception: caps.head_depth || caps.yolo_foundation_pose || caps.aruco,
-      joints: caps.joints, actions: caps.atomic_actions || caps.workflows};
-    for (const [tab, enabled] of Object.entries(supported)) {
-      const button = document.querySelector(`[data-tab="${tab}"]`);
-      if (button) { button.hidden = !enabled; button.style.display = enabled ? "inline-flex" : "none"; }
-      if (!enabled && this.activeTabName === tab) this.switchTab("overview");
+    this.featureState = featureAvailability(caps);
+    applyFeatureNavigation(document.querySelectorAll(".primary-nav [data-tab]"), this.featureState);
+    const note = document.querySelector("#featureAvailabilityNote");
+    if (note) {
+      const unavailable = Object.values(this.featureState).filter(feature => !feature.enabled);
+      note.textContent = unavailable.length ? unavailable.map(feature => `${feature.label}：${feature.reason}`).join("；") : "全部功能入口可用 · 实际操作仍受 Mock 权限和 Lease 门禁约束";
     }
-    if (!caps) return;
-    const navTabBtn = document.querySelector('#tabBtnNav');
-    if (navTabBtn) {
-      if (!caps.navigation) {
-        navTabBtn.style.display = "none";
-        navTabBtn.setAttribute("aria-hidden", "true");
-        if (this.activeTabName === "navigation") {
-          this.switchTab("overview");
-        }
-      } else {
-        navTabBtn.style.display = "inline-flex";
-        navTabBtn.removeAttribute("aria-hidden");
-        navTabBtn.style.opacity = "1.0";
-        navTabBtn.title = "2D 导航与底盘控制";
-      }
-    }
+    if (this.featureState[this.activeTabName]?.enabled === false) this.switchTab("overview");
   }
 
   _onTelemetry(state) {

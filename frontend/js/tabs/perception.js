@@ -418,7 +418,8 @@ export function initPerceptionTab(container) {
       if (!state) return;
       const desc = state.descriptor || {};
       const obs = state.observation || {};
-      const cams = (desc.capabilities && desc.capabilities.cameras) || [];
+      const caps = desc.capabilities || {};
+      const cams = desc.cameras || [];
 
       // Check if robot has cameras
       if (!cams || cams.length === 0) {
@@ -433,6 +434,14 @@ export function initPerceptionTab(container) {
         if (obs.perception.latched_generation !== undefined) latchedGeneration = obs.perception.latched_generation;
         if (obs.perception.foundation_pose_active !== undefined) sixDRunning = obs.perception.foundation_pose_active;
         updatePipelineUI();
+      }
+      // Camera viewing does not imply unsupported depth/YOLO/6D/ArUco operations.
+      const capabilityButtons = {percepToggleDepthBtn:caps.head_depth, btnStartYolo:caps.yolo_foundation_pose,
+        btnLatchSegment:caps.yolo_foundation_pose, btnStart6D:caps.yolo_foundation_pose, btnArucoFineAdjust:caps.aruco};
+      for (const [id,enabled] of Object.entries(capabilityButtons)) {
+        const button = container.querySelector("#" + id);
+        button.disabled = !enabled;
+        button.title = enabled ? "仅本地 Mock 演示，写操作仍需 Lease" : "当前机型未提供此项能力；相机查看仍可用";
       }
     },
   };

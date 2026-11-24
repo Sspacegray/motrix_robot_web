@@ -46,7 +46,7 @@ def test_offline_model_and_loader_routes_and_fresh_brand(tmp_path):
     with TestClient(app) as client:
         html = client.get("/")
         assert html.status_code == 200
-        assert "LOO1-20261124-model-v1" in html.text
+        assert "LOO1-20261124-navigation-v2" in html.text
         assert "motphys-logo.svg?v=" in html.text
         assert '<polygon points="12 2 2 22 22 22"' not in html.text
         assert "no-cache" in html.headers["cache-control"]
