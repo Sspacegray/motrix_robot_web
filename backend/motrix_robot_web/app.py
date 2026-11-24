@@ -334,6 +334,31 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
         return {"allowed": True, "groups": groups, "policy": "arms_only"}
 
     # ---- Navigation & Chassis ----
+    @app.get("/api/robots/{robot_id}/navigation/map")
+    def get_nav_map(robot_id: str) -> dict[str, Any]:
+        """Read-only occupancy / Mock point-cloud metadata. Never acquires a lease or starts motion."""
+        conn, _gate = ctx.get_robot(robot_id)
+        desc = conn.descriptor
+        if not desc.capabilities.navigation:
+            return {
+                "supported": False,
+                "reason": f"{desc.name} 无移动底盘导航能力，不提供占用栅格或点云，也不使用其他机型地图替代。",
+                "pointcloud": {"available": False, "live": False, "source": None},
+            }
+        return {
+            "supported": True,
+            "kind": "occupancy_grid",
+            "image_url": desc.map_image_url,
+            "yaml": desc.map_yaml,
+            "pointcloud": {
+                "available": True,
+                "live": False,
+                "source": "mock_from_occupancy",
+                "frame": "map",
+                "label": "Mock 示例点云，由本地 2D 占用栅格生成，不是真实激光雷达或现场采集；真实三维点云数据待接入。",
+            },
+        }
+
     @app.post("/api/robots/{robot_id}/navigation/mode")
     def set_nav_mode(robot_id: str, body: dict[str, Any]) -> dict[str, Any]:
         conn, gate = ctx.get_robot(robot_id)

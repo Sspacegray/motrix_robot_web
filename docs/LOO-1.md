@@ -135,3 +135,12 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 - 新模块用途：`pose-preview.js`为无API纯预览状态/事件/URDF映射；`robot-model-viewer.js`加载原STL与URDF材质、原mimic及EE锚点；`joints.js`分离目标/反馈并提供双手预览；manifest和回归测试校验最小资产与跨机型隔离。回退请对本次提交新建revert，不reset/clean，不删除配置、运行数据或已有安全修复。
 
 - 本批回归结果：Python 66 passed / 1条既有Starlette-httpx弃用警告；Node 22 passed；全部原生ESM语法与源码diff检查通过（2个逐字节保留的原始手URDF含原有CRLF/行尾空格，原资产不做格式重写，diff whitespace检查仅豁免这两文件）；40个待提交文件秘密/运行路径扫描0发现。隔离W1全流程11步均通过，分派0、外部连接0。Mac本批热同步尚未完成：ListMachines显示在线但两次正常Shell均报temporarily unreachable，未改Mac文件/服务，不能把box修复说成Mac已部署。
+
+
+## 2026-11-24 地图 2D 占用栅格与 3D Mock 点云（map-cloud-v4）
+
+- 审计：原导航页仅有本地 `frontend/assets/mx_map.png` + `mx_map.yaml`（ROS trinary 占用栅格，分辨率 0.05m，321×349）。仓库与已授权参考中未发现 `.pcd`/`.ply` 或真实激光雷达点云。yaml 引用的 `mx_map.pgm` 不在仓库中，现用 PNG。Loop 参考仅有文件检视用的顶视图点云组件，未迁移框架。
+- 实现：同一地图页增加 Loop 风格二级页签，默认「2D 占用栅格」保留原平移/缩放/目标拖拽与安全下发；「3D 点云」用已有离线 Three.js 轨道查看由该占用栅格生成的示例点（占用格拉伸为墙、自由格稀疏地面）。明确标注 Mock 示例、非实时、非真实采集；真实三维点云待接入，不把演示当现场数据。
+- 能力：只读 `GET /api/robots/{id}/navigation/map` 不申请 Lease、不下发目标。R1 Mock 返回 `source=mock_from_occupancy`、`live=false`。W1/Piper `supported=false` 并说明不使用其他机型地图替代；全局导航入口仍保留并禁用。安全写接口与状态机未改。
+- 验证：`tests/test_map_cloud.mjs`、`tests/test_map_cloud_api.py` 与既有套件。浏览器中 3D 装配与轨道交互须另验。回退请对本次提交新建 revert。
+- Mac：a380b9c / pose-hands-v3 最小同步在冲突核验通过后因本机 Shell temporarily unreachable 中断，本批 map-cloud 因此也尚未同步 Mac。

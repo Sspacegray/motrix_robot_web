@@ -1,5 +1,7 @@
-// Tab 3: 2D Navigation & Chassis Control
+// Tab 3: 2D occupancy map, Mock 3D point cloud, and chassis control
 import { api } from "../api.js";
+import { occupancyToPointCloud, lumaFromRgba, MOCK_CLOUD_LABEL } from "../map-cloud.js";
+import { createMapCloudViewer } from "../map-cloud-viewer.js";
 
 export function initNavigationTab(container) {
   let mapImage = null;
@@ -18,9 +20,9 @@ export function initNavigationTab(container) {
   container.innerHTML = `
     <!-- Non-navigation Robot Banner (hidden if navigation supported) -->
     <div id="navNotSupportedCard" class="card" style="display:none; border-left: 4px solid var(--warning); background:#fffbeb;">
-      <div style="font-weight:600; color:#b45309; margin-bottom:4px;">机型未装配移动底盘与 2D SLAM 导航套件</div>
+      <div style="font-weight:600; color:#b45309; margin-bottom:4px;">机型未装配移动底盘与导航套件</div>
       <div style="font-size:13px; color:#78350f;">
-        当前选中机型（如 Piper 双臂台架或 Dexforce W1 人形）未配置移动底盘。导航控制域已根据其 RobotDescriptor.capabilities.navigation 矩阵自动锁定并禁用下发。
+        当前选中机型（如 Piper 双臂台架或 Dexforce W1 人形）未配置移动底盘。2D 占用栅格与 3D 点云入口保留可见，但按能力禁用，不把 R1 的 mx_map 或其他机型数据当作本机采集。
       </div>
     </div>
 
@@ -28,9 +30,15 @@ export function initNavigationTab(container) {
       <!-- Left: 2D Map Canvas & Goal Selection -->
       <div class="card" style="margin-bottom:0;">
         <div class="card-header" style="padding-bottom:10px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span class="card-title">2D SLAM 地图导航 (mx_map)</span>
-            <span class="badge badge-info" id="navResolutionBadge">分辨率: 0.05m/pix</span>
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="card-title">地图导航 (mx_map)</span>
+              <span class="badge badge-info" id="navResolutionBadge">分辨率: 0.05m/pix</span>
+            </div>
+            <div class="map-view-tabs" role="tablist" aria-label="地图视图">
+              <button type="button" class="btn btn-sm sub-tab-btn" data-map-view="occupancy2d" aria-selected="true">2D 占用栅格</button>
+              <button type="button" class="btn btn-sm sub-tab-btn" data-map-view="cloud3d" aria-selected="false">3D 点云</button>
+            </div>
           </div>
           <div style="display:flex; align-items:center; gap:8px;">
             <button class="btn btn-sm" id="navResetViewBtn">重置视角</button>
@@ -39,8 +47,10 @@ export function initNavigationTab(container) {
         </div>
 
         <!-- Canvas Container -->
+        <p class="preview-field-note" id="mapCloudNote">默认 2D 占用栅格来自本地 mx_map。3D 点云为同一栅格生成的 Mock 示例，不是真实激光雷达或现场采集。</p>
         <div style="position:relative; width:100%; height:460px; background:#1e293b; border-radius:var(--radius-sm); overflow:hidden; border:1px solid var(--border);">
           <canvas id="navMapCanvas" width="700" height="460" style="width:100%; height:100%; display:block; cursor:crosshair;"></canvas>
+          <canvas id="navCloudCanvas" class="nav-cloud-canvas" width="700" height="460" hidden></canvas>
           <div style="position:absolute; bottom:12px; left:12px; background:rgba(15,23,42,0.8); color:#f8fafc; font-size:11px; padding:4px 8px; border-radius:4px; font-family:var(--font-mono); pointer-events:none;" id="navCoordsOverlay">
             X: 0.00m | Y: 0.00m | Yaw: 0.0°
           </div>
@@ -175,7 +185,45 @@ export function initNavigationTab(container) {
   mapImage.onload = () => {
     resetView();
     drawMap();
+    maybeBuildCloud();
   };
+
+  const cloudCanvas = container.querySelector("#navCloudCanvas");
+  const cloudViewer = createMapCloudViewer({ canvas: cloudCanvas, hud: container.querySelector("#mapCloudNote") });
+  let mapView = "occupancy2d";
+  let cloudReady = false;
+
+  function maybeBuildCloud() {
+    if (cloudReady || !mapImage.complete || !mapImage.naturalWidth) return;
+    const probe = document.createElement("canvas");
+    probe.width = mapImage.naturalWidth;
+    probe.height = mapImage.naturalHeight;
+    const probeCtx = probe.getContext("2d");
+    probeCtx.drawImage(mapImage, 0, 0);
+    const imageData = probeCtx.getImageData(0, 0, probe.width, probe.height);
+    const cloud = occupancyToPointCloud({
+      luma: lumaFromRgba(imageData.data),
+      width: imageData.width,
+      height: imageData.height,
+      resolution: mapYaml.resolution,
+      origin: mapYaml.origin,
+    });
+    cloudViewer.setCloud(cloud);
+    cloudReady = true;
+  }
+
+  function setMapView(next) {
+    mapView = next === "cloud3d" ? "cloud3d" : "occupancy2d";
+    container.querySelectorAll("[data-map-view]").forEach(btn => {
+      btn.setAttribute("aria-selected", btn.dataset.mapView === mapView ? "true" : "false");
+    });
+    const threeD = mapView === "cloud3d";
+    canvas.hidden = threeD;
+    cloudCanvas.hidden = !threeD;
+    if (threeD) { maybeBuildCloud(); cloudViewer.resize(); cloudViewer.setActive(true); cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath }); }
+    else cloudViewer.setActive(false);
+  }
+  container.querySelectorAll("[data-map-view]").forEach(btn => btn.addEventListener("click", () => setMapView(btn.dataset.mapView)));
 
   function resetView() {
     if (!canvas || !mapImage) return;
@@ -186,7 +234,7 @@ export function initNavigationTab(container) {
     drawMap();
   }
 
-  container.querySelector("#navResetViewBtn").addEventListener("click", resetView);
+  container.querySelector("#navResetViewBtn").addEventListener("click", () => { if (mapView === "cloud3d") cloudViewer.resetView(); else resetView(); });
 
   // Coordinate transforms
   // world (meters) -> pixel on original image
@@ -563,6 +611,8 @@ export function initNavigationTab(container) {
       }
 
       drawMap();
+      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
     },
+    destroy() { cloudViewer.destroy(); },
   };
 }
