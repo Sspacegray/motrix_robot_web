@@ -38,7 +38,7 @@ export function initPolicyTab(container) {
         <div class="card" style="margin-bottom:0;">
           <div class="card-header" style="margin-bottom:10px;">
             <span class="card-title">权重切模与 Action Layout 预检</span>
-            <span class="badge badge-passed" id="checkpointReadyBadge">预检通过</span>
+            <span class="badge badge-passed" id="checkpointReadyBadge">等待预检</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
             Mock 固定 Checkpoint 清单（未扫描磁盘或加载真实模型）。下发前自动校验输入 Observation 布局与输出 Action 维度，严禁越界或维度失配下发。
@@ -46,10 +46,7 @@ export function initPolicyTab(container) {
 
           <div style="display:flex; gap:10px; margin-bottom:12px;">
             <select id="checkpointSelect" class="form-control" style="flex:1; padding:6px 10px; font-size:13px; border:1px solid var(--border); border-radius:var(--radius-sm); font-family:var(--font-mono);">
-              <option value="piper_cup_pickup_v3.safetensors">piper_cup_pickup_v3.safetensors (ACT · 14-DOF · 30Hz)</option>
-              <option value="piper_insert_gear_v1.safetensors">piper_insert_gear_v1.safetensors (Diffusion · 14-DOF · 50Hz)</option>
-              <option value="r1pro_table_cleaning_v2.pt">r1pro_table_cleaning_v2.pt (OpenVLA · 20-DOF · 20Hz)</option>
-              <option value="dex_w1_stand_balance_v1.onnx">dex_w1_stand_balance_v1.onnx (RL MLP · 20-DOF · 100Hz)</option>
+              <option value="">等待当前机器人 Checkpoint 清单</option>
             </select>
             <button class="btn btn-sm btn-primary" id="btnSwitchCheckpoint">加载并预检</button>
           </div>
@@ -336,6 +333,9 @@ export function initPolicyTab(container) {
     const layoutBadge = container.querySelector("#policyLayoutBadge");
     layoutBadge.textContent = layout.text;
     layoutBadge.className = `badge ${layout.status === "matched" ? "badge-info" : "badge-warning"}`;
+    const precheckBadge = container.querySelector("#checkpointReadyBadge");
+    precheckBadge.textContent = layout.status === "matched" ? "Mock 维度预检通过" : "未知或不匹配";
+    precheckBadge.className = `badge ${layout.status === "matched" ? "badge-passed" : "badge-warning"}`;
     container.querySelector("#modelActionDim").textContent = active?.action_dim ?? "--";
     isInferring = !!policy.infer_running; updateInferUI();
     const result = policy.last_offline_eval;
