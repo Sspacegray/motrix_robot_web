@@ -16,7 +16,7 @@
 ## 验证
 
 - `uv run pytest -q`：62 passed；1 条 FastAPI/Starlette 对 httpx 的上游弃用警告（不是零警告）。覆盖三构型、适配器 fail-closed、权限旁路、过期心跳/闲置、切机、急停、策略顺序、有限数值、只读镜像与工作流。
-- `node --test tests/test_client_api.mjs`：2 passed，验证旧机释放顺序、失败不切换和旧遥测丢弃。
+- `node --test tests/test_client_api.mjs`：3 passed，验证旧机释放顺序、失败不切换和旧遥测丢弃。
 - 所有 `frontend/js/*.js`、`frontend/js/tabs/*.js` 经 Node ESM 语法检查。
 - 仅通过本机 TestClient 与 loopback HTTP 验证，无真实机器人/CAN/远程生产连接。执行代理未进行浏览器视觉验收；视觉与交互应由父代理另验，不能把静态 token 测试称为视觉验收。
 
@@ -43,7 +43,7 @@ uv run python -m motrix_robot_web --host 127.0.0.1 --port 8097 --data-dir /works
 |---|---|---|---|
 | `app.py`, `safety.py`, `workflow_engine.py`, `schemas.py` | 堵写入口、同步 watchdog、停机联动、拒绝非有限值、诚实元数据 | Python API/安全/工作流测试 | 整批回退，不应独立回退安全模块 |
 | `connectors/{unavailable,edge,r1pro,piper_lelab,dex_w1,mock}.py` | 真实骨架 fail-closed；Mock 顺序和来源 | 适配器/策略回归 | 同上；不得恢复假转发用于实机 |
-| `frontend/css/style.css`, `index.html`, `js/{app,api,drawer}.js` | 真实 Loop 核心布局、无租约切机、抽屉 | token/API/Node 语法及客户端状态测试；视觉待验 | 可单独恢复 UI，保留后端安全 |
+| `frontend/css/style.css`, `index.html`, `js/{app,api,drawer,policy-layout}.js` | 真实 Loop 核心布局、无租约切机、抽屉 | token/API/Node 语法及客户端状态测试；视觉待验 | 可单独恢复 UI，保留后端安全 |
 | `frontend/js/tabs/{policy,joints,overview}.js` | 策略接后端；禁用假录制；只读模型/仿真与遥测来源说明 | Mock/Node；视觉待验 | 同上 |
 | `tests/test_loo1_regression.py`, `tests/test_loo1_regressions.py`, `tests/test_client_api.mjs`, 原测试调整 | 新约束的负面用例与顺序流程 | 上述命令 | 随实现回退，勿仅删除失败测试 |
 | `.gitignore`, `pyproject.toml`, `README.md`, 本文与许可证 | 排除 data/密钥/缓存、明确异步 fixture、真实状态/端口、保留许可 | git 文件清单/秘密扫描/测试 | 保留忽略规则与许可 |
