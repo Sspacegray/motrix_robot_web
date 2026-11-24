@@ -67,3 +67,14 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 - 新增/修改目的：完整修正信息层级与执行详情，保留原生 ESM/FastAPI 离线架构、全部原安全边界及许可证。回退：对本 UI 增量提交创建新的 revert（不强推），不回退之前的后端安全修复。
 - 验证：`uv run pytest -q` 为 62 passed、1 条原上游弃用警告；`node --test tests/test_client_api.mjs tests/test_ui_format.mjs` 为 7 passed；全部 ESM 语法与 `git diff --check` 通过。R1Pro 20DOF 与 Piper 14DOF 的 Action Layout 动态回归已包含在 Node 测试中。
 - 视觉状态：子代理尝试 Read 用户图片时工具明确拒绝为父代理私有附件；未绕过或读取。仅按用户明确描述和只读 Loop 源码重构。这里不宣称已与图片逐像素匹配，也没有把单元测试当作浏览器验收。父代理需亲自读取原图，并在 box `http://127.0.0.1:8096/` 强制刷新查看默认 Actions → Jobs，点击 `Mock dry-run` 查看遮罩抽屉；截图建议保存 `/workspace/loo1-tracking/loop-jobs-v2.png` 与 `loop-drawer-v2.png`（尚未生成）。Mac 原目录仍未同步。
+
+## 13:43 Asia/Shanghai 用户澄清：默认主页面、按需二级详情
+
+- 已逐项复读只读 Loop `layouts/main-layout/main-layout.vue`、header 组件/导航、`pages/action-page.vue`、`components/title-section.vue`、`components/execution/execution-tasks.vue`。
+- 真实源码证据：main-layout 只有 Header + 自适应 page-container/router-view；action-page 使用白色 title-section + 二级 tabs，内容区是 tab-panel；execution-tasks 的 `detailOpen = ref(false)`，仅 `openDetail` 点击行改 true、`closeDetail` 改 false。因此不是默认左右分栏。
+- 本项目抽屉原本就默认关闭：构造只创建 `.drawer-panel` / `.drawer-backdrop`，不带 `.open`，panel 初始 inert；CSS 默认 visibility:hidden 且 fixed 右侧移出，遮罩 display:none；仅显式 `open(jobId)` 展示，`close()` 删除 open 和页面滚动锁。没有预留 760px 列宽，不需要重写/进一步强化抽屉。
+- 找到真正多余层级：品牌全局导航后，又重复一整行七个机器人功能 tabs。此次删除该重复条，将现有七个真实功能统一映射到唯一全局导航；保留标题卡内的页面二级 tabs。标题/字号/留白按 title-section 改为 Loop Actions / 24px / 20px×24px，不再加额外 eyebrow 与介绍段。
+- 与原版有意保留差异：全局菜单映射机器人已有功能，不造 Projects/Datatable/Access Control 空链接；标题 tabs 是 Jobs/Workflows/Atomic actions/Import-Export，不冒充未实现 Templates/Triggers；机器人状态/权限/急停条为本应用安全所需，保留。源码 Loop 默认 Templates，本项目首屏 Jobs 是当前验收目标。原生 ESM，不迁 Quasar/Vue。
+- 验证：新增 `tests/test_drawer_lifecycle.mjs`，运行实际抽屉 controller 的最小 DOM double，验证启动无请求/无 open、选中任务才展示、关闭恢复；另验证每功能只有唯一导航、无固定分栏。Node 合计 9 passed；这不是浏览器或截图验收。
+- 新增/修改文件：index.html 去重复导航、actions.js 标题、style.css 源码对应尺寸、drawer lifecycle 测试及本文。原因是减少层级并证实默认全宽。回退只需新建本增量 revert，保留之前安全修复。
+- 给父代理默认首页截图路径：打开/强刷 `http://127.0.0.1:8096/`，不点击任务、不点击 Mock dry-run，即为全宽默认主页面；若已有抽屉打开，按 Esc 或右上 × 或点击遮罩关闭。建议输出 `/workspace/loo1-tracking/loop-default-main-v3.png`，尚未生成，待父代理派浏览器验收。Mac 未同步。

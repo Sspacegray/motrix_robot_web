@@ -993,3 +993,15 @@ button:focus-visible, a:focus-visible, select:focus-visible {outline:2px solid v
 body.execution-open {overflow:hidden;}
 @media (max-width:1050px) {.top-header {padding:0 16px;} .primary-nav {gap:0; padding-left:10px;} .primary-nav .tab-btn {padding:0 10px;} .robot-control-strip {padding:10px 16px;} .header-environment {display:none;} .workspace-context {padding:12px 16px;} .app-content {padding:12px 16px;} .sub-nav-bar {margin:0 8px;} }
 @media (max-width:600px) {.top-header {height:auto; min-height:64px;} .brand-section {gap:12px; flex-wrap:wrap;} .primary-nav {height:42px; padding-left:0; border:0;} .execution-title-row {padding:18px; align-items:flex-start;} .execution-title-row .workspace-readonly {display:none;} .execution-subtabs {padding:0 16px;} .execution-subtabs > div:first-child {gap:12px!important;} .jobs-filters {width:100%;} .job-search {width:100%;} .drawer-header {gap:8px;} .drawer-actions {gap:4px;} }
+
+/* Source-aligned main page correction: one global nav, heading + local tabs only.
+   execution-tasks.vue defaults detailOpen=false; detail never reserves a column. */
+.primary-nav {gap:2px; padding-left:16px;}
+.primary-nav .tab-btn {padding-inline:12px; font-size:13px;}
+.brand-section {gap:24px;}
+.execution-title-row {padding:20px 24px;}
+.execution-title-row h1 {font-size:24px; line-height:32px; margin:0; letter-spacing:-.01em;}
+.app-content {padding-top:0; width:100%;}
+@media (max-width:1280px) {.header-environment {display:none;} .primary-nav .tab-btn {padding-inline:10px;} }
+@media (max-width:1050px) {.brand-section {width:100%; gap:12px; flex-wrap:nowrap;} .primary-nav {overflow-x:auto; min-width:0; flex:1;} .primary-nav .tab-btn {flex-shrink:0;} }
+@media (max-width:600px) {.brand-section {flex-wrap:wrap;} .primary-nav {height:42px; flex-basis:100%;} .execution-title-row {padding:16px;} .execution-title-row h1 {font-size:20px; line-height:28px;} }

@@ -8,7 +8,7 @@ export function initActionsTab(container) {
   let lastJobsSignature = "";
   container.innerHTML = `
     <section class="execution-heading-card">
-      <div class="execution-title-row"><div><div class="eyebrow">LOCAL WORKSPACE</div><h1>Actions</h1><p>编排机器人工作流，查看每次本地 Mock 执行的步骤与日志。</p></div><span class="workspace-readonly">MOCK ONLY · 默认只读</span></div>
+      <div class="execution-title-row"><div><h1>Loop Actions</h1></div><span class="workspace-readonly">MOCK ONLY · 默认只读</span></div>
     <!-- Sub navigation for Actions Tab -->
     <div class="execution-subtabs">
       <div style="display:flex; gap:8px;">
