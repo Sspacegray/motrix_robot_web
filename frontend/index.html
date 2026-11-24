@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Motphys Robot Web — 统一机器人高层控制与感知平台</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/vendor/three/three.module.js",
+      "three/": "/vendor/three/",
+      "three/addons/": "/vendor/three/addons/",
+      "three/examples/jsm/": "/vendor/three/addons/",
+      "urdf-loader": "/vendor/urdf/URDFLoader.js"
+    }
+  }
+  </script>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%230d9488'><polygon points='12 2 2 22 22 22'/></svg>">
+</head>
+<body>
+
+  <!-- Top Sticky Header (Motphys Loop Layout) -->
+  <header class="top-header">
+    <div class="brand-section">
+      <a href="/" class="brand-logo" title="Motphys Robot Web">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 2 22 22 22"></polygon>
+        </svg>
+        <span>Motphys <span style="font-weight:400; color:var(--text-muted); font-size:14px;">Loop / Robot Web</span></span>
+      </a>
+      <div class="brand-divider"></div>
+      <div class="robot-selector-wrap">
+        <label for="robotSelector" style="font-size:12px; color:var(--text-muted); font-weight:500;">机器人机型:</label>
+        <select id="robotSelector" class="select-clean" aria-label="选择机器人机型">
+          <option value="r1pro-mock">R1 Pro (双臂+移动底盘+4相机)</option>
+          <option value="piper-dual-mock">Piper Dual (14-DOF 双臂+3相机)</option>
+          <option value="dex-w1-mock">Dexforce W1 (20-DOF 人形+URDF)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Status & Authority Indicators & Global E-Stop -->
+    <div class="header-status-group">
+      <!-- Mode Pill -->
+      <span class="pill-badge pill-mock" id="headerModePill" title="当前运行模式: MOCK / SIM / REAL">MOCK</span>
+
+      <!-- Operator Task Permission Pill -->
+      <button class="pill-badge pill-auth" id="headerAuthPill" title="点击快速切换高层任务权限 (Viewer / Operator / Admin)" data-perm="operator">
+        Perm: OPERATOR
+      </button>
+
+      <!-- Underlying Control Lease Pill -->
+      <button class="pill-badge pill-auth" id="headerLeasePill" title="底层控制 Lease: 点击申请或释放控制权" data-active="false">
+        <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span>
+        Lease: 只读未授权
+      </button>
+
+      <!-- Connection & Latency Indicator -->
+      <span style="font-family:var(--font-mono); font-size:11px; color:var(--success); padding:0 4px;" id="headerConnAge" title="DDS / CAN 反馈延迟与采样频率">
+        18ms · 30Hz
+      </span>
+
+      <div class="brand-divider" style="height:16px;"></div>
+
+      <!-- Global Free E-Stop Button -->
+      <button class="estop-btn" id="headerEstopBtn" title="免租约全局急停 (快捷键 Space / Shift+Space)。注意：软件急停 ≠ 硬件断电急停">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        软件急停 (Space)
+      </button>
+    </div>
+  </header>
+
+  <!-- Secondary Navigation Tabs Bar (Motphys Loop Layout) -->
+  <nav class="sub-nav-bar" aria-label="功能域导航">
+    <div class="tab-list" role="tablist">
+      <button class="tab-btn" role="tab" aria-selected="true" data-tab="overview">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="14" y="14" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+        </svg>
+        总览与拓扑
+      </button>
+
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="joints">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        关节与 3D 视图
+      </button>
+
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="actions">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 11 12 14 22 4"></polyline>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+        </svg>
+        动作与工作流
+      </button>
+
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="navigation" id="tabBtnNav">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="3 11 22 2 13 21 11 13 3 11"></polygon>
+        </svg>
+        2D 地图与底盘
+      </button>
+
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="perception">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+          <circle cx="12" cy="13" r="4"></circle>
+        </svg>
+        视觉感知工作台
+      </button>
+
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="policy">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2v20"></path>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+        </svg>
+        策略推理与评测
+      </button>
+
+      <button class="tab-btn" role="tab" aria-selected="false" data-tab="diagnostics">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+        </svg>
+        安全与诊断中心
+      </button>
+    </div>
+
+    <div class="sub-nav-right">
+      <span>Motrix Sim 只读镜像: <strong style="color:var(--accent);">Active</strong></span>
+    </div>
+  </nav>
+
+  <!-- App Main Content Panes -->
+  <main class="app-content">
+    <div id="tabPaneOverview" class="tab-panel active"></div>
+    <div id="tabPaneJoints" class="tab-panel"></div>
+    <div id="tabPaneActions" class="tab-panel"></div>
+    <div id="tabPaneNavigation" class="tab-panel"></div>
+    <div id="tabPanePerception" class="tab-panel"></div>
+    <div id="tabPanePolicy" class="tab-panel"></div>
+    <div id="tabPaneDiagnostics" class="tab-panel"></div>
+  </main>
+
+  <!-- E-Stop Latched Modal -->
+  <div class="modal-overlay" id="modalEstopLatched">
+    <div class="modal-box" style="border-top:5px solid var(--danger);">
+      <div class="modal-header">
+        <h3 style="color:var(--danger); display:flex; align-items:center; gap:8px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          机器人软件急停已被锁定 (E-Stop Latched)
+        </h3>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:8px; font-weight:600; color:#b91c1c;">
+          注意：软件急停 ≠ 硬件断电急停。
+        </p>
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+          当前所有运动下发通道与自主工作流已被网关全部阻断，底层 Lease 控制权已强制撤销。若现场发生物理碰撞或机械危险，请立即按下物理断电蘑菇头急停！
+        </p>
+        <div style="background:var(--bg-subtle); padding:10px; border-radius:var(--radius-sm); font-size:12px; font-family:var(--font-mono); margin-bottom:14px;" id="estopReasonDetail">
+          原因: 手动触发 (时间: --)
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="btnClearEstopModalBtn">解除急停锁定 (恢复待机)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lease Acquisition Modal -->
+  <div class="modal-overlay" id="modalLeaseAcquire">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>申请底层控制租约 (Acquire Control Lease)</h3>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
+          获取 Lease 后将拥有实机运动控制权。系统将启动 <strong>3 秒操作心跳看门狗</strong>（断联自动急停，不自动恢复）；持续 5 分钟闲置将自动解除授权。
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:14px;">
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--text-main);">操作员身份标识 (Operator Name)</label>
+            <input type="text" id="leaseOperatorInput" value="operator@motphys" style="width:100%; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:13px; margin-top:4px;">
+          </div>
+
+          <div>
+            <label style="font-size:12px; font-weight:600; color:var(--text-main);">任务授权级别 (Task Permission)</label>
+            <select id="leasePermSelect" style="width:100%; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:13px; margin-top:4px;">
+              <option value="operator" selected>operator (标准操作员)</option>
+              <option value="admin">admin (管理员)</option>
+            </select>
+          </div>
+
+          <label style="display:flex; align-items:start; gap:8px; font-size:12px; cursor:pointer; background:var(--bg-subtle); padding:10px; border-radius:var(--radius-sm);">
+            <input type="checkbox" id="chkConfirmLeaseSafety" style="margin-top:2px; accent-color:var(--accent);">
+            <span>我已知晓并确认机器人工作半径 1.5 米内无障碍物与人员干涉，准备进行动作控制。</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btnCancelLeaseAcquire">取消</button>
+        <button class="btn btn-primary" id="btnConfirmLeaseAcquire">确认申请 Lease</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Entry Script -->
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

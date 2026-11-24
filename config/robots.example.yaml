@@ -1,0 +1,41 @@
+# Motphys 统一高层控制与感知 Web — 机器人连接器配置示例
+# 默认内建 3 台全功能 Mock 构型（r1pro-mock / piper-dual-mock / dex-w1-mock），开箱零硬件可演示。
+# 如需接入现场机器人，取消对应 connector 注释并重启服务（默认均以只读态启动，禁止双入口并发写）。
+
+robots:
+  # --- 1. 主线：motrix-edge（Piper 双臂正式线 / 未来所有 Edge 接入构型）---
+  # - id: piper-edge-01
+  #   name: Piper Dual-Arm (Motrix Edge)
+  #   connector: edge
+  #   mode: real
+  #   base_url: http://10.30.20.49:8000
+  #   readonly_only: true   # P1 阶段保持只读；P2 经 Edge 验收后再改为 false
+  #   notes: "唯一 CAN 写者归 Robot Pipeline；启用此项时严禁同时启动 Piper LeLab 写 CAN"
+
+  # --- 2. 过渡桥：R1 Pro 现有 webv2（192.168.3.x 独立 NAT，需网络可达）---
+  # - id: r1pro-pc10
+  #   name: Galaxea R1 Pro (pc10 Bridge)
+  #   connector: r1pro
+  #   mode: real
+  #   base_url: http://192.168.3.23:8080
+  #   readonly_only: true
+  #   notes: "过渡期代理现有 r1pro_web_server；同一资源严禁与旧 webv2 并发写"
+
+  # --- 3. 过渡桥：Piper LeLab 现有控制端 + omah 推理服务 ---
+  # - id: piper-lelab-live
+  #   name: Piper LeLab (motphys + omah)
+  #   connector: piper_lelab
+  #   mode: real
+  #   base_url: http://10.30.20.49:8095
+  #   policy_url: http://10.30.20.8:18100
+  #   readonly_only: true
+  #   notes: "与 motrix-edge 互斥，严禁出现第二 CAN 写者"
+
+  # --- 4. 只读镜像：Dexforce W1（PC2 SSE 上游镜像）---
+  # - id: dex-w1-pc2
+  #   name: Dexforce W1 (PC2 Mirror)
+  #   connector: dex_w1
+  #   mode: real
+  #   base_url: http://10.30.130.154:8090
+  #   readonly_only: true
+  #   notes: "只读消费 /api/events SSE，不反向下发控制"
