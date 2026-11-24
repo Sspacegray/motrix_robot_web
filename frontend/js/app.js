@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { drawer } from "./drawer.js";
 import { featureAvailability, applyFeatureNavigation } from "./navigation-state.js";
 import { initOverviewTab } from "./tabs/overview.js";
-import { initJointsTab } from "./tabs/joints.js?v=LOO1-20261124-navigation-v2";
+import { initJointsTab } from "./tabs/joints.js?v=LOO1-20261124-pose-hands-v3";
 import { initActionsTab } from "./tabs/actions.js";
 import { initNavigationTab } from "./tabs/navigation.js";
 import { initPerceptionTab } from "./tabs/perception.js";

@@ -1021,3 +1021,11 @@ body.execution-open {overflow:hidden;}
 .primary-nav .tab-btn:disabled::after {display:none;}
 .feature-availability-note {flex-basis:100%; color:var(--text-muted); font-size:11px; line-height:1.6;}
 .workspace-context {flex-wrap:wrap; gap:8px 16px;}
+
+.pose-preview-toolbar {display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:12px;}
+.pose-preview-toolbar > span, .preview-field-note {font-size:11px; color:var(--text-muted); line-height:1.6;}
+.preview-field-note {margin:8px 0 12px;}
+.hand-preview-group {margin-top:14px; border-top:1px solid var(--border); padding-top:10px;}
+.hand-preview-group h4 {font-size:12px; margin-bottom:8px;}
+.hand-preview-row {display:grid; grid-template-columns:125px minmax(80px,1fr) 70px; gap:8px; align-items:center; font:11px var(--font-mono); padding:5px 0;}
+.hand-preview-row input {width:100%; accent-color:var(--accent);}

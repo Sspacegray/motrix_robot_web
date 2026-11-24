@@ -120,3 +120,18 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 - 新增 `navigation-state.js` 统一能力可达性，`test_navigation_access.mjs` 验证七入口不消失、三机型矩阵、相机-only感知、禁用原因、切机恢复及原子/流程/任务分立。W1真实模型、品牌及安全后端无改动。build 标识更新为 `LOO1-20261124-navigation-v2`。
 - 验收URL：`/?tab=navigation&robot=r1pro-mock` 地图导航；`/?tab=actions&section=actions&robot=r1pro-mock` 原子动作；section=workflows 为流程、section=jobs 为记录；`/?tab=perception&robot=dex-w1-mock` W1相机入口；`/?tab=policy&robot=piper-dual-mock` Piper策略。浏览器视觉验收仍由父代理进行。用户图片为父代理私有附件，子代理 Read 被拒，未绕过；以上依据实际源码定位。
 - 文件目的：index/app/nav-state恢复完整可见入口和守卫；actions明确二级页及直达/切机更新；perception区分相机能力与算法启动；CSS禁用样式/说明；测试和本文记录回归。回退仅revert本修复，不回退安全/模型/品牌修复。若同步Mac，只备份并部署这些已测增量，保留全部配置和已有Mock数据；不在Mac开发。
+
+
+## 2026-11-24 本地滑块与 BrainCo Revo1 机械手修复（pose-hands-v3）
+
+本节覆盖前文历史状态：当前 build 为 `LOO1-20261124-pose-hands-v3`，主验收端口8096；Mac先前已按用户授权部署，不再是“Mac未改动”状态。
+
+- 根因：原滑块只改 `localTargets`，模型仅接收 `obs.joint_positions`，因此目标 -0.65 而反馈0.00时模型不动。现在默认“本地目标预览”，range/number 的 `input` 立即经 `PosePreview` → `applyModelJoints` → URDF `setJointValue`。切换“当前反馈姿态”仍只显示原Mock反馈；拖动不申请Lease、不发动作、不覆盖反馈。执行仍需显式按钮及既有Lease门禁。
+- 真实手部来源：授权Mac原项目 `frontend/assets/urdf/dexforce_w1_v030/ee/brainco_revo1/{left_hand,right_hand}/`。早先仅导入21个身体GLB；身体 `robot.urdf` / `robot_with_ee.urdf` 均只有空的 `left_ee/right_ee` 锚点，没有装配手。不能据此宣称原版手部控制曾正常工作。
+- 最小增加2个原始 `*_hand_stl_visual.urdf` 和逐文件复制的24个被引用STL；没有整库/碰撞模型搬运。按原身体EE变换和手URDF自身坐标接入，不添加编造偏移、比例或纹理。每手6个独立驱动关节、4个原始mimic联动；专用手部滑块仅本地预览，无假反馈，不加入身体执行/原子动作保存。仅W1映射，Piper/R1不套用这些手。
+- 材质：身体仍21 GLB / 10张内嵌原贴图；机械手STL只有URDF原色材质、没有纹理贴图。实际WebGL解码/左右手装配与拖动外观须浏览器另验；HTTP/hash与状态测试不等于视觉验收。
+- 资产来源与许可：沿用上述用户授权项目路径，逐文件SHA-256记录于 `hand-manifest.json`。未发现模型资产独立再分发许可，不将其重新指定MIT；保持原始归属，仅本用户私有项目用途。Loop MIT、Three MIT、URDFLoader Apache声明原样保留。
+- 复现全流程：`uv run python scripts/verify_w1_mock_flow.py --report-dir /tmp/w1-mock-report`。隔离临时数据、进程内TestClient，禁止socket连接，动作分派spy断言0。记录见 `docs/W1-MOCK-TEST.md`；原始JSON在指定报告目录，不提交运行数据。真实手反馈/CAN/Edge/WASM/采集上传/真实评测均未覆盖，不伪造。
+- 新模块用途：`pose-preview.js`为无API纯预览状态/事件/URDF映射；`robot-model-viewer.js`加载原STL与URDF材质、原mimic及EE锚点；`joints.js`分离目标/反馈并提供双手预览；manifest和回归测试校验最小资产与跨机型隔离。回退请对本次提交新建revert，不reset/clean，不删除配置、运行数据或已有安全修复。
+
+- 本批回归结果：Python 66 passed / 1条既有Starlette-httpx弃用警告；Node 22 passed；全部原生ESM语法与源码diff检查通过（2个逐字节保留的原始手URDF含原有CRLF/行尾空格，原资产不做格式重写，diff whitespace检查仅豁免这两文件）；40个待提交文件秘密/运行路径扫描0发现。隔离W1全流程11步均通过，分派0、外部连接0。Mac本批热同步尚未完成：ListMachines显示在线但两次正常Shell均报temporarily unreachable，未改Mac文件/服务，不能把box修复说成Mac已部署。

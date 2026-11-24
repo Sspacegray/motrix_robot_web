@@ -46,7 +46,7 @@ def test_offline_model_and_loader_routes_and_fresh_brand(tmp_path):
     with TestClient(app) as client:
         html = client.get("/")
         assert html.status_code == 200
-        assert "LOO1-20261124-navigation-v2" in html.text
+        assert "LOO1-20261124-pose-hands-v3" in html.text
         assert "motphys-logo.svg?v=" in html.text
         assert '<polygon points="12 2 2 22 22 22"' not in html.text
         assert "no-cache" in html.headers["cache-control"]
@@ -60,3 +60,25 @@ def test_offline_model_and_loader_routes_and_fresh_brand(tmp_path):
         assert client.get("/vendor/three/addons/utils/BufferGeometryUtils.js").status_code == 200
         assert client.get("/assets/motphys-logo.svg").content == (ROOT / "frontend/assets/motphys-logo.svg").read_bytes()
         assert "no-cache" in client.get("/js/robot-model-viewer.js").headers["cache-control"]
+
+
+def test_original_brainco_hand_assets_and_w1_attachment_paths():
+    manifest = json.loads((ASSET / "hand-manifest.json").read_text())
+    assert len(manifest["hands"]) == 2
+    assert len(manifest["files"]) == 26
+    main_links = {link.attrib["name"] for link in ET.parse(ASSET / "robot.urdf").findall("link")}
+    for hand in manifest["hands"]:
+        assert hand["anchor"] in main_links
+        assert hand["visualCount"] == 12
+        urdf = ASSET / hand["url"].split("dexforce_w1_v030/")[1]
+        tree = ET.parse(urdf)
+        refs = {node.attrib["filename"] for node in tree.findall(".//visual/geometry/mesh")}
+        assert len(refs) == 12
+        drivers = {node.attrib["name"] for node in tree.findall("joint") if node.attrib["type"] == "revolute" and node.find("mimic") is None}
+        assert drivers == {joint["name"] for joint in hand["joints"]}
+        assert len(drivers) == 6 and len(tree.findall(".//mimic")) == 4
+    for entry in manifest["files"]:
+        blob = (ASSET / entry["path"]).read_bytes()
+        assert hashlib.sha256(blob).hexdigest() == entry["sha256"]
+        if entry["path"].endswith(".stl"):
+            assert len(blob) == 84 + struct.unpack_from("<I",blob,80)[0] * 50
