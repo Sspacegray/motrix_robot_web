@@ -101,6 +101,8 @@ def test_piper_checkpoint_layout_contract():
     assert res["active_checkpoint"] == "pi05_real_noframe_136_30k/030000"
 
     # Offline evaluation produces trajectory comparison and safety contract notes
+    for step in ("homing", "manual_slow_test"):
+        piper.control_policy("wizard_step", {"step": step, "done": True})
     eval_res = piper.control_policy("offline_eval", {"dataset": "set_the_plates_real_all_mcap_20261119_v1"})
     assert eval_res["ok"] is True
     assert "rmse_rad" in eval_res["eval"]
@@ -128,9 +130,12 @@ def test_dex_w1_strictly_read_only():
     w1_desc = conns["dex-w1-mock"].descriptor
     w1_conn = DexW1ReadOnlyConnector(w1_desc, "http://10.3.130.154:8090")
 
-    # Read-only telemetry works
+    # Scaffold must not invent real telemetry
     obs = w1_conn.get_observation()
     assert obs.robot_id == "dex-w1-mock"
+    assert not obs.connected
+    assert obs.telemetry_source == "unavailable"
+    assert obs.joint_positions == {}
 
     # Any write control returns 403
     with pytest.raises(SafetyError) as exc:

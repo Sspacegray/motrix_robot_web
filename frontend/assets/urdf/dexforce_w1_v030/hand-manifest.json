@@ -1,0 +1,219 @@
+{
+  "robot_id": "dex-w1-mock",
+  "type": "BrainCo Revo1 left/right source URDF + visual STL",
+  "local_preview_only": true,
+  "source": "User existing Mac project, selected 2 URDF + 24 referenced visual STL, no other library copied",
+  "license": "Original asset ownership retained; no separate asset license supplied, private project only; not MIT re-licensed",
+  "hands": [
+    {
+      "side": "left",
+      "url": "/assets/urdf/dexforce_w1_v030/ee/brainco_revo1/left_hand/left_hand_stl_visual.urdf",
+      "anchor": "left_ee",
+      "visualCount": 12,
+      "embeddedImages": 0,
+      "joints": [
+        {
+          "name": "T_CMC_YAW",
+          "lower": 0.0,
+          "upper": 1.5708
+        },
+        {
+          "name": "T_MCP",
+          "lower": 0.0,
+          "upper": 0.8727
+        },
+        {
+          "name": "IF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        },
+        {
+          "name": "MF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        },
+        {
+          "name": "RF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        },
+        {
+          "name": "LF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        }
+      ]
+    },
+    {
+      "side": "right",
+      "url": "/assets/urdf/dexforce_w1_v030/ee/brainco_revo1/right_hand/right_hand_stl_visual.urdf",
+      "anchor": "right_ee",
+      "visualCount": 12,
+      "embeddedImages": 0,
+      "joints": [
+        {
+          "name": "T_CMC_YAW",
+          "lower": 0.0,
+          "upper": 1.5708
+        },
+        {
+          "name": "T_MCP",
+          "lower": 0.0,
+          "upper": 0.87266
+        },
+        {
+          "name": "IF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        },
+        {
+          "name": "MF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        },
+        {
+          "name": "RF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        },
+        {
+          "name": "LF_MCP_PITCH",
+          "lower": 0.0,
+          "upper": 1.309
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "ee/brainco_revo1/left_hand/left_hand_stl_visual.urdf",
+      "bytes": 13209,
+      "sha256": "2e4b9238b4c82ab0740c93c4c0c0bfc2fc0fbed348b1131b532eff39b25d5715"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/connector_link.stl",
+      "bytes": 967334,
+      "sha256": "8ce278b26c9d46840bbeec180ceb3140360d6a36d65f68874d6c8b67de39f601"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/hand_base_link.stl",
+      "bytes": 5484434,
+      "sha256": "d6815004dc6763d3e838c4955efc0d4d1068a9673df8df0cbfc89c2d9dde0d4a"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/if_dip_link.stl",
+      "bytes": 633934,
+      "sha256": "3102182486f4a19ccced5670912adaf569dda70e4f742e7559dd2f75bd9dab51"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/if_mcp_pitch_link.stl",
+      "bytes": 381684,
+      "sha256": "c64eacf153ad46998a975c59e0590bcb5142ccca6fc541874f70dfd8331c3025"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/lf_dip_link.stl",
+      "bytes": 645684,
+      "sha256": "56d524e25cb2ecd30984b0091371d5a01b8ecc551527d70a56cb7cf79a133128"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/lf_mcp_pitch_link.stl",
+      "bytes": 381684,
+      "sha256": "77b0a8c955faf5eac08154c28faa4785ba768290fe1c1e02a243dcdb7798c76e"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/mf_dip_link.stl",
+      "bytes": 633934,
+      "sha256": "eaf078030138b7f1ec8f0393182b03460cecba3d7a714c69ca1573d4541d7531"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/mf_mcp_pitch_link.stl",
+      "bytes": 361984,
+      "sha256": "9f4175826a41f30239509decc0eb4e8e8b5864d21d9ac401e51dc8a055c9778e"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/rf_dip_link.stl",
+      "bytes": 649684,
+      "sha256": "79f9f520369a0e5563317fcdce3390c8cb01414c45204380a17955080a133cd6"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/rf_mcp_pitch_link.stl",
+      "bytes": 361984,
+      "sha256": "3fbc26254e2e1248ad07472c8a30eff4e080e0bf65255317be9a57ea0758bfd4"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/t_cmc_yaw_link.stl",
+      "bytes": 148434,
+      "sha256": "59a296a6728621e5a7ea543684f61e4a6f0e21b6415c739260e6a52e6b81f831"
+    },
+    {
+      "path": "ee/brainco_revo1/left_hand/visual/stl/t_mcp_link.stl",
+      "bytes": 980284,
+      "sha256": "31ec1156adb7e4f721868b6efd77388179bbbb9f465bd62a296370143879adeb"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/right_hand_stl_visual.urdf",
+      "bytes": 12945,
+      "sha256": "d04b72c572d56c8b2dcf118bf6e9da2899888327243da6dadb102b76fd4b26e4"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/connector_link.stl",
+      "bytes": 979334,
+      "sha256": "10aac9f60f60a25b789107989144ebbe14cad9eb8f4e8349780b71f9d3576981"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/hand_base_link.stl",
+      "bytes": 5355634,
+      "sha256": "af17503b14c07281800eb4c1848a5031ed70d23ce24d24aa75126405adb0184f"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/if_dip_link.stl",
+      "bytes": 635784,
+      "sha256": "d3bdc045612b97d2861c2860150b80abfc8e07045f1ace65d3fd3f49a6cc9c96"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/if_mcp_pitch_link.stl",
+      "bytes": 381684,
+      "sha256": "114d9266eafbd15053738bb7b13dcb60f36b2022149c73178fd88056b01873b8"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/lf_dip_link.stl",
+      "bytes": 647284,
+      "sha256": "db706a83d0db83cf6f3f539f26cc1552feb292d8b96c01915f51ab761fe31468"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/lf_mcp_pitch_link.stl",
+      "bytes": 381684,
+      "sha256": "93783a304fd070f08d577e49a6ab3f6bdbfb5af01d17a5c835dcbb234ec9c0c1"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/mf_dip_link.stl",
+      "bytes": 635784,
+      "sha256": "d3bdc045612b97d2861c2860150b80abfc8e07045f1ace65d3fd3f49a6cc9c96"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/mf_mcp_pitch_link.stl",
+      "bytes": 362284,
+      "sha256": "a9a378757d75d27e248bcf280d64d638b7c2d8df047c70a015ce01894bfca98e"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/rf_dip_link.stl",
+      "bytes": 650334,
+      "sha256": "b0a0e834ae17d08d865616d43e544119bde80e868a926e9a879413a0784012cb"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/rf_mcp_pitch_link.stl",
+      "bytes": 362284,
+      "sha256": "b9be1d5dadf540d4802bfe5613442284eb427f80afa47f12560e852de743d7fe"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/t_cmc_yaw_link.stl",
+      "bytes": 148534,
+      "sha256": "86b210968d021300461bbe386e95209cf78f555b46f97993a3430876209dd8db"
+    },
+    {
+      "path": "ee/brainco_revo1/right_hand/visual/stl/t_mcp_link.stl",
+      "bytes": 980684,
+      "sha256": "9671bcf33c4627d34137623238fdc80fc3a8932b663179c0d0c309dbb582b4b2"
+    }
+  ]
+}

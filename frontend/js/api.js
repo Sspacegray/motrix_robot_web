@@ -9,9 +9,16 @@ export class RobotApi {
     this.cachedState = null;
   }
 
-  setRobotId(id, force = false) {
+  async setRobotId(id, force = false) {
     if (!force && this.currentRobotId === id && this.sse) return;
+    const oldId = this.currentRobotId;
+    this.stopHeartbeat();
+    if (!force && oldId !== id) {
+      // Release the OLD robot before changing request routing or showing the new robot.
+      await this.post(`/api/robots/${encodeURIComponent(oldId)}/lease/release`);
+    }
     this.currentRobotId = id;
+    this.cachedState = null;
     this.connectSSE();
     this.getState().then((s) => this._notify(s)).catch(() => {});
   }
@@ -23,6 +30,8 @@ export class RobotApi {
   }
 
   _notify(state) {
+    if (state.descriptor?.id !== this.currentRobotId) return;
+    if (!state.authority?.lease_active) this.stopHeartbeat();
     this.cachedState = state;
     for (const cb of this.listeners) {
       try {
@@ -57,11 +66,13 @@ export class RobotApi {
 
   startHeartbeat(leaseId) {
     this.stopHeartbeat();
+    const robotId = this.currentRobotId;
     this.heartbeatTimer = setInterval(async () => {
       try {
-        await this.post(`/api/robots/${this.currentRobotId}/lease/heartbeat`, { lease_id: leaseId });
+        await this.post(`/api/robots/${robotId}/lease/heartbeat`, { lease_id: leaseId });
       } catch (err) {
-        console.warn("Heartbeat failed", err);
+        this.stopHeartbeat();
+        console.warn("Heartbeat failed; explicit reacquire required", err);
       }
     }, 1000);
   }

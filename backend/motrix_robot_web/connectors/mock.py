@@ -78,7 +78,7 @@ def _r1pro_descriptor() -> RobotDescriptor:
         ],
         capabilities=RobotCapabilities(
             joints=True,
-            urdf_3d=True,
+            urdf_3d=False,
             motrix_mirror=True,
             ee_6d=True,
             atomic_actions=True,
@@ -154,7 +154,7 @@ def _piper_descriptor() -> RobotDescriptor:
         ],
         capabilities=RobotCapabilities(
             joints=True,
-            urdf_3d=True,
+            urdf_3d=False,
             motrix_mirror=True,
             ee_6d=True,
             atomic_actions=True,
@@ -966,17 +966,28 @@ class MockRobotConnector(RobotConnector):
                 )
             if self._policy.infer_running:
                 raise SafetyError(409, "infer_running", "请先停止当前推理会话再动态切换检查点。")
+            for key in self._policy.wizard_steps:
+                self._policy.wizard_steps[key] = key == "self_check"
+            self._policy.last_offline_eval = None
             self._policy.active_checkpoint = found.id
             self._policy.rtc_enabled = found.rtc_supported
             return {"ok": True, "active_checkpoint": found.id, "rtc_enabled": found.rtc_supported}
 
         if action == "set_config":
+            if self._policy.infer_running:
+                raise SafetyError(409, "infer_running", "先停止推理再更改配置。")
+            self._policy.wizard_steps["live_armed"] = False
+            self._policy.wizard_steps["offline_replay"] = False
+            self._policy.last_offline_eval = None
             if "task_intent" in payload:
                 self._policy.task_intent = str(payload["task_intent"])
             if "execution_schema" in payload:
                 self._policy.execution_schema = str(payload["execution_schema"])
             if "speed_scale" in payload:
-                self._policy.speed_scale = max(0.1, min(1.0, float(payload["speed_scale"])))
+                value = float(payload["speed_scale"])
+                if not math.isfinite(value):
+                    raise SafetyError(400, "invalid_number", "速度比例必须为有限数值。")
+                self._policy.speed_scale = max(0.1, min(1.0, value))
             return {"ok": True, "policy": self._policy.model_dump()}
 
         if action == "wizard_step":
@@ -984,10 +995,24 @@ class MockRobotConnector(RobotConnector):
             if step_key not in self._policy.wizard_steps:
                 raise SafetyError(400, "invalid_wizard_step", f"未知向导步骤：{step_key}")
             val = bool(payload.get("done", True))
+            order = list(self._policy.wizard_steps)
+            index = order.index(step_key)
+            if val and not all(self._policy.wizard_steps[k] for k in order[:index]):
+                raise SafetyError(409, "wizard_prerequisite", "必须按顺序完成 Mock 安全演示步骤，禁止跳步。")
+            if val and step_key == "offline_replay":
+                raise SafetyError(409, "evaluation_required", "离线步骤只能由 Mock 评测完成，不接受勾选伪造评测。")
             self._policy.wizard_steps[step_key] = val
+            for key in order[index + 1:]:
+                self._policy.wizard_steps[key] = False
+            self._policy.infer_running = False
+            self._policy.infer_hz = 0.0
             return {"ok": True, "wizard_steps": dict(self._policy.wizard_steps)}
 
         if action == "offline_eval":
+            if self.descriptor.capabilities.piper_safety_wizard and not all(
+                self._policy.wizard_steps[k] for k in ("self_check", "homing", "manual_slow_test")
+            ):
+                raise SafetyError(409, "wizard_prerequisite", "先完成 Mock 自检、回零确认和低速确认步骤。")
             dataset = str(payload.get("dataset") or ("set_the_plates_real_all_mcap_20261119_v1" if self.descriptor.robot_type == "piper_dual" else "r1pro_basket_mcap_sample"))
             steps = list(range(16))
             gt_j1 = [round(0.2 + 0.35 * math.sin(i * 0.35), 4) for i in steps]
@@ -996,6 +1021,10 @@ class MockRobotConnector(RobotConnector):
             pred_j2 = [round(v - 0.018 * math.sin(i * 0.5), 4) for i, v in enumerate(gt_j2)]
             rmse = round(math.sqrt(sum((a - b) ** 2 for a, b in zip(gt_j1, pred_j1)) / len(steps)), 4)
             res = {
+                "data_source": "synthetic_mock",
+                "dataset_parsed": False,
+                "qualified_for_hardware": False,
+                "disclaimer": "生成的 Mock 演示曲线；未读取 MCAP/LeRobot，不是真实模型评测或硬件放行证据。",
                 "eval_id": f"eval-{uuid.uuid4().hex[:8]}",
                 "timestamp": utc_iso(),
                 "dataset": dataset,
@@ -1016,10 +1045,11 @@ class MockRobotConnector(RobotConnector):
             }
             self._policy.last_offline_eval = res
             self._policy.wizard_steps["offline_replay"] = True
+            self._policy.wizard_steps["live_armed"] = False
             return {"ok": True, "eval": res}
 
         if action == "start_infer":
-            if self.descriptor.capabilities.piper_safety_wizard and not self._policy.wizard_steps.get("live_armed"):
+            if self.descriptor.capabilities.piper_safety_wizard and not all(self._policy.wizard_steps.values()):
                 raise SafetyError(409, "live_arm_required", "Piper 安全门禁：必须完成 6 步武装清单并勾选「⑤ 武装 Live（推理）」后才能启动实时推理。")
             self._policy.infer_running = True
             self._policy.infer_hz = 10.0
@@ -1060,7 +1090,9 @@ class MockRobotConnector(RobotConnector):
             self._nav.mode = "FAULT"
         self._policy.infer_running = False
         self._policy.infer_hz = 0.0
-        self._policy.wizard_steps["live_armed"] = False
+        for key in self._policy.wizard_steps:
+            self._policy.wizard_steps[key] = key == "self_check"
+        self._policy.last_offline_eval = None
         self._perc.aruco_fine_enabled = False
         self._log_perc(f"SAFE STOP triggered: {reason}")
 

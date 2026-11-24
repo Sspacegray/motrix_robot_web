@@ -1,27 +1,37 @@
 // Tab 3: Atomic Actions, Workflow Sequences & Loop Execution Jobs
 import { api } from "../api.js";
 import { drawer } from "../drawer.js";
+import { escapeHtml, formatLocalTime, filterJobs } from "../ui-format.js";
 
 export function initActionsTab(container) {
+  let jobsRequest = 0;
+  let lastJobsSignature = "";
+  let activeSub = "jobs";
+  let lastRobotId = api.currentRobotId;
   container.innerHTML = `
+    <section class="execution-heading-card">
+      <div class="execution-title-row"><div><h1>Loop Actions · 动作与工作流</h1></div><span class="workspace-readonly">MOCK ONLY · 默认只读</span></div>
     <!-- Sub navigation for Actions Tab -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <div class="execution-subtabs">
       <div style="display:flex; gap:8px;">
-        <button class="btn btn-sm sub-tab-btn" data-sub="jobs" style="background:var(--accent-light); color:var(--accent);">执行任务 (Loop Jobs)</button>
-        <button class="btn btn-sm sub-tab-btn" data-sub="workflows">工作流编排 (Sequences)</button>
-        <button class="btn btn-sm sub-tab-btn" data-sub="actions">原子动作库 (Actions)</button>
-        <button class="btn btn-sm sub-tab-btn" data-sub="r1pro">R1 Pro 格式导入/导出</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="jobs" aria-selected="true" style="background:var(--accent-light); color:var(--accent);">执行任务记录</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="workflows">工作流编排</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="actions">原子动作</button>
+        <button class="btn btn-sm sub-tab-btn" data-sub="r1pro">R1 导入 / 导出</button>
       </div>
       <div>
-        <button class="btn btn-sm btn-primary" id="newActionOrWfBtn">+ 新建动作/流程</button>
+        <button class="btn btn-sm btn-primary" id="newActionOrWfBtn">+ 新建原子动作</button>
       </div>
     </div>
 
+    </section>
+
     <!-- Section 1: Jobs Table (Motphys Loop Layout) -->
-    <div id="subViewJobs" class="card">
+    <div id="subViewJobs" class="card jobs-card">
       <div class="card-header">
-        <span class="card-title">Loop Actions 任务执行历史 (Jobs)</span>
-        <div style="display:flex; gap:8px;">
+        <span class="card-title">Jobs <span class="job-count" id="jobCount">0</span></span>
+        <div class="jobs-filters">
+          <input type="search" id="jobSearch" class="job-search" aria-label="搜索任务" placeholder="搜索 Flow / Run / Operator…">
           <select class="select-clean" id="jobStateFilter" style="font-size:12px; padding:3px 8px;">
             <option value="ALL">全部状态 (All States)</option>
             <option value="Running">Running</option>
@@ -29,7 +39,8 @@ export function initActionsTab(container) {
             <option value="Failed">Failed</option>
             <option value="Canceled">Canceled</option>
           </select>
-          <button class="btn btn-sm" id="refreshJobsBtn">刷新</button>
+          <button class="btn btn-sm" id="refreshJobsBtn">↻ 刷新</button>
+          <button class="btn btn-sm btn-primary" id="previewDryRunBtn">+ Mock dry-run</button>
         </div>
       </div>
       <div class="table-wrapper">
@@ -57,7 +68,7 @@ export function initActionsTab(container) {
     <div id="subViewWorkflows" class="card" style="display:none;">
       <div class="card-header">
         <span class="card-title">工作流编排库 (Workflow Sequences)</span>
-        <button class="btn btn-sm btn-primary" id="createWorkflowBtn">+ 新建工作流</button>
+        <button class="btn btn-sm btn-primary" id="createWorkflowBtn" disabled title="可通过 Import / Export 导入工作流；可视编辑器尚未实现">可视编排未实现</button>
       </div>
       <div id="workflowsListContainer" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:14px;">
         <!-- Workflows rendered dynamically -->
@@ -166,25 +177,21 @@ export function initActionsTab(container) {
     r1pro: container.querySelector("#subViewR1Pro"),
   };
 
-  subBtns.forEach(btn => {
-    btn.addEventListener("click", () => {
-      const sub = btn.getAttribute("data-sub");
-      subBtns.forEach(b => {
-        b.style.background = "";
-        b.style.color = "";
-      });
-      btn.style.background = "var(--accent-light)";
-      btn.style.color = "var(--accent)";
-
-      Object.entries(subViews).forEach(([k, el]) => {
-        el.style.display = k === sub ? "block" : "none";
-      });
-
-      if (sub === "jobs") _loadJobs();
-      if (sub === "workflows") _loadWorkflows();
-      if (sub === "actions") _loadActions();
+  function showSubView(sub) {
+    if (!subViews[sub]) return;
+    activeSub = sub;
+    subBtns.forEach(button => {
+      const selected = button.getAttribute("data-sub") === sub;
+      button.setAttribute("aria-selected", String(selected));
+      button.style.background = selected ? "var(--accent-light)" : "";
+      button.style.color = selected ? "var(--accent)" : "";
     });
-  });
+    Object.entries(subViews).forEach(([key,element]) => {element.style.display = key === sub ? "block" : "none";});
+    if (sub === "jobs") _loadJobs();
+    if (sub === "workflows") _loadWorkflows();
+    if (sub === "actions") _loadActions();
+  }
+  subBtns.forEach(button => button.addEventListener("click", () => showSubView(button.getAttribute("data-sub"))));
 
   // Action Dialog
   const actionDialog = container.querySelector("#actionEditDialog");
@@ -233,29 +240,30 @@ export function initActionsTab(container) {
 
   // Jobs Loading
   async function _loadJobs() {
+    const request = ++jobsRequest;
+    const robotId = api.currentRobotId;
     const tbody = container.querySelector("#jobsListBody");
     const filter = container.querySelector("#jobStateFilter").value;
     try {
       const data = await api.listJobs();
-      let jobs = data.jobs || [];
-      if (filter !== "ALL") {
-        jobs = jobs.filter(j => j.state === filter);
-      }
+      if (request !== jobsRequest || robotId !== api.currentRobotId) return;
+      const jobs = filterJobs(data.jobs || [], filter, container.querySelector("#jobSearch").value);
+      container.querySelector("#jobCount").textContent = jobs.length;
       if (jobs.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:#94a3b8;">暂无匹配的执行任务</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:#94a3b8;">暂无匹配的执行任务。点击「Mock dry-run」生成本地验证记录（不发送运动指令）。</td></tr>`;
         return;
       }
       tbody.innerHTML = jobs.map(j => `
-        <tr data-job-id="${j.job_id}">
-          <td><span class="badge badge-${j.state.toLowerCase()}">${j.state}</span></td>
-          <td><span style="font-weight:600; color:var(--text-muted);">${j.kind}</span></td>
-          <td style="font-weight:600;">${j.flow_name}</td>
-          <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">${j.run_id}</td>
-          <td style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">${j.pipeline_sha ? j.pipeline_sha.slice(0, 10) : "--"}</td>
-          <td style="font-size:12px; color:var(--text-muted);">${j.created_at ? j.created_at.slice(11, 19) : "--"}</td>
-          <td style="font-size:12px;">${j.operator || "--"}</td>
+        <tr data-job-id="${escapeHtml(j.job_id)}">
+          <td><span class="badge badge-${escapeHtml(j.state.toLowerCase())}">${escapeHtml(j.state)}</span></td>
+          <td><span style="font-weight:600; color:var(--text-muted);">${escapeHtml(j.kind)}</span></td>
+          <td style="font-weight:600;">${escapeHtml(j.flow_name)}</td>
+          <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">${escapeHtml(j.run_id)}</td>
+          <td style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">${escapeHtml(j.pipeline_sha ? j.pipeline_sha.slice(0, 10) : "--")}</td>
+          <td style="font-size:12px; color:var(--text-muted);">${formatLocalTime(j.created_at)}</td>
+          <td style="font-size:12px;">${escapeHtml(j.operator || "--")}</td>
           <td style="text-align:right;">
-            <button class="btn btn-sm open-drawer-btn" data-job="${j.job_id}">查看详情 ➔</button>
+            <button class="btn btn-sm open-drawer-btn" data-job="${escapeHtml(j.job_id)}">查看详情 ➔</button>
           </td>
         </tr>
       `).join("");
@@ -274,12 +282,25 @@ export function initActionsTab(container) {
         });
       });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger);">加载失败: ${err.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger);">加载失败: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
 
   container.querySelector("#refreshJobsBtn").addEventListener("click", _loadJobs);
   container.querySelector("#jobStateFilter").addEventListener("change", _loadJobs);
+  container.querySelector("#jobSearch").addEventListener("input", _loadJobs);
+  container.querySelector("#previewDryRunBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const { workflows = [] } = await api.listWorkflows();
+      if (!workflows.length) throw new Error("当前机器人尚无工作流，请先创建工作流");
+      const { job } = await api.runWorkflow(workflows[0].id, true);
+      await _loadJobs();
+      await drawer.open(job.job_id);
+    } catch (error) { alert("Mock dry-run: " + error.message); }
+    finally { button.disabled = false; }
+  });
 
   // Workflows Loading
   async function _loadWorkflows() {
@@ -340,7 +361,7 @@ export function initActionsTab(container) {
         });
       });
     } catch (err) {
-      wrap.innerHTML = `<div style="color:var(--danger);">加载失败: ${err.message}</div>`;
+      wrap.innerHTML = `<div style="color:var(--danger);">加载失败: ${escapeHtml(err.message)}</div>`;
     }
   }
 
@@ -378,7 +399,7 @@ export function initActionsTab(container) {
         });
       });
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);">加载失败: ${err.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);">加载失败: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
 
@@ -418,12 +439,21 @@ export function initActionsTab(container) {
     }
   });
 
-  // Initial load
-  _loadJobs();
+  // Direct links preserve the independent catalog/workflow/jobs pages.
+  const requestedSection = new URLSearchParams(window.location.search).get("section");
+  showSubView(subViews[requestedSection] ? requestedSection : "jobs");
 
   return {
     update(state) {
-      // Background updates if needed
+      if (lastRobotId !== api.currentRobotId) {
+        lastRobotId = api.currentRobotId;
+        showSubView(activeSub);
+      }
+      const signature = JSON.stringify([state?.descriptor?.id, (state?.recent_jobs || []).map(j => [j.job_id, j.state])]);
+      if (signature !== lastJobsSignature) {
+        lastJobsSignature = signature;
+        _loadJobs();
+      }
     }
   };
 }

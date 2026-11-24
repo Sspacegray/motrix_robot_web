@@ -2,31 +2,39 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { api } from "../api.js";
+import { createRobotModelViewer } from "../robot-model-viewer.js";
+import { modelForDescriptor } from "../model-registry.js";
+import { PosePreview, bindLocalPreviewInput } from "../pose-preview.js";
 
 export function initJointsTab(container) {
   container.innerHTML = `
+    <div class="card pose-preview-toolbar">
+      <label for="poseViewMode">身体 3D 姿态来源</label>
+      <select id="poseViewMode" class="select-clean"><option value="target">本地目标预览 · 拖动立即显示</option><option value="feedback">当前反馈姿态 · Mock 反馈来源</option></select>
+      <span id="poseModeNote">拖动仅改变本地模型，不申请 Lease、不发送动作；反馈读数独立保留。</span>
+    </div>
     <div class="grid-split-view">
       <!-- Left Column: 3D Viewport & Motrix Mirror Status -->
       <div>
         <div class="viewport-3d-box" id="viewportBox">
           <canvas class="viewport-3d-canvas" id="viewportCanvas"></canvas>
           <div class="viewport-overlay-hud" id="viewportHud">
-            3D Viewport · Orbit Controls · Real: Solid / Target: Ghost
+            本地只读模型视图 · 等待机型选择（不加载硬件驱动）
           </div>
         </div>
 
         <!-- Motrix WASM Read-Only Mirror Status Box -->
         <div class="card" style="margin-top: 14px;">
           <div class="card-header" style="margin-bottom:6px; padding-bottom:6px;">
-            <span class="card-title" style="font-size:13px;">Motrix WASM 仿真只读镜像桥</span>
-            <span class="badge badge-passed" id="motrixIsoBadge">Isolation: OK</span>
+            <span class="card-title" style="font-size:13px;">Motrix 只读消息桥（WASM 仿真器未接入）</span>
+            <span class="badge badge-passed" id="motrixIsoBadge">本地协议隔离</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between; margin-bottom:6px;">
             <span>WebSocket 地址: <code style="font-family:var(--font-mono); color:var(--text-main);">/ws/motrix</code></span>
             <span>已连接查看器: <b id="motrixClientsCount">0</b></span>
           </div>
           <p style="font-size:11px; color:#64748b; background:var(--bg-subtle); padding:6px 10px; border-radius:var(--radius-sm);">
-            严格只读隔离断言：本镜像桥零加载底层 CAN/ROS 写驱动，绝不通过 WebSocket 反向写控机器人，仅向 Motrix 浏览器仿真器广播 Observation 姿态。
+            严格只读隔离断言：本镜像桥零加载底层 CAN/ROS 写驱动，绝不通过 WebSocket 反向写控机器人，仅提供 Observation 广播协议；尚未接入 Motrix WASM 客户端。
           </p>
         </div>
 
@@ -47,10 +55,10 @@ export function initJointsTab(container) {
           <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between;">
             <div style="display:flex; gap:8px;">
               <button class="btn btn-sm" id="readCurrentBtn">读当前到目标</button>
-              <button class="btn btn-sm btn-primary" id="execTargetBtn">执行目标位姿</button>
+              <button class="btn btn-sm btn-primary" id="execTargetBtn">执行到 Mock（需 Lease）</button>
             </div>
             <div style="display:flex; gap:8px;">
-              <button class="btn btn-sm" id="saveActionBtn">保存为原子动作</button>
+              <button class="btn btn-sm" id="saveActionBtn">保存身体原子动作</button>
               <button class="btn btn-sm" id="teachCheckBtn">示教仅释放双臂</button>
             </div>
           </div>
@@ -84,10 +92,12 @@ export function initJointsTab(container) {
             <span class="card-title" style="font-size:13px;">关节控制与限位表 (Joints)</span>
             <span style="font-size:11px; color:var(--text-muted);">单位: rad / norm</span>
           </div>
+          <p class="preview-field-note">滑块 / 数值：本地目标预览；中间读数：当前 Mock 反馈。预览≠执行。</p>
           <div id="jointsSlidersContainer" style="max-height: 480px; overflow-y: auto; padding-right: 4px;">
             <div style="text-align:center; color:#94a3b8; padding:20px;">加载关节定义...</div>
           </div>
         </div>
+        <div id="handPreviewPanel" class="card" style="margin-top:14px;"></div>
       </div>
     </div>
   `;
@@ -115,64 +125,7 @@ export function initJointsTab(container) {
   const grid = new THREE.GridHelper(2.4, 24, 0x0d9488, 0x334155);
   scene.add(grid);
 
-  // Procedural Articulated Robot Node Graph
-  const robotGroup = new THREE.Group();
-  const ghostGroup = new THREE.Group();
-  scene.add(robotGroup);
-  scene.add(ghostGroup);
-
-  // Ghost material (purple translucent per dex_web)
-  const ghostMat = new THREE.MeshStandardMaterial({
-    color: 0xa855f7,
-    transparent: true,
-    opacity: 0.35,
-    roughness: 0.4,
-  });
-  const solidMat = new THREE.MeshStandardMaterial({
-    color: 0x0d9488,
-    roughness: 0.3,
-    metalness: 0.2,
-  });
-  const accentMat = new THREE.MeshStandardMaterial({
-    color: 0xf59e0b,
-    roughness: 0.4,
-  });
-
-  // Build basic articulated kinematic hierarchy for 3D visual preview
-  const jointMeshes = {};
-  const ghostMeshes = {};
-
-  function buildProceduralArm(parentGroup, isGhost, side, colorMat) {
-    const root = new THREE.Group();
-    root.position.set(side === "left" ? 0.2 : -0.2, 0.65, 0);
-    parentGroup.add(root);
-
-    // 6-7 links
-    let cur = root;
-    const links = [];
-    for (let i = 0; i < 6; i++) {
-      const g = new THREE.Group();
-      const geom = new THREE.CylinderGeometry(0.024, 0.028, 0.12, 12);
-      geom.rotateZ(Math.PI / 2);
-      const mesh = new THREE.Mesh(geom, i === 5 ? accentMat : colorMat);
-      mesh.position.set(side === "left" ? 0.06 : -0.06, 0, 0);
-      g.add(mesh);
-      cur.add(g);
-      cur = g;
-      links.push(g);
-    }
-    return links;
-  }
-
-  // Base torso / pedestal
-  const baseGeom = new THREE.CylinderGeometry(0.14, 0.18, 0.45, 24);
-  robotGroup.add(new THREE.Mesh(baseGeom, solidMat));
-  ghostGroup.add(new THREE.Mesh(baseGeom, ghostMat));
-
-  const leftArmLinks = buildProceduralArm(robotGroup, false, "left", solidMat);
-  const rightArmLinks = buildProceduralArm(robotGroup, false, "right", solidMat);
-  const ghostLeftLinks = buildProceduralArm(ghostGroup, true, "left", ghostMat);
-  const ghostRightLinks = buildProceduralArm(ghostGroup, true, "right", ghostMat);
+  const modelViewer = createRobotModelViewer({scene, camera, controls, hud:container.querySelector("#viewportHud")});
 
   // Resize handler for 3D canvas
   function onResize() {
@@ -187,6 +140,8 @@ export function initJointsTab(container) {
     }
   }
   window.addEventListener("resize", onResize);
+  const resizeObserver = new ResizeObserver(onResize);
+  resizeObserver.observe(container.querySelector("#viewportBox"));
   setTimeout(onResize, 100);
 
   // 3D Render Loop
@@ -257,7 +212,8 @@ export function initJointsTab(container) {
   }
 
   // 3. UI State & Event Bindings
-  let localTargets = {};
+  const preview = new PosePreview();
+  let localTargets = preview.targets;
   let currentPositions = {};
   let currentDescriptor = null;
   let activeEEArm = "left";
@@ -299,15 +255,41 @@ export function initJointsTab(container) {
     });
   });
 
+  function refreshLocalModel() {
+    localTargets = preview.targets;
+    container.querySelector("#poseViewMode").value = preview.mode;
+    modelViewer.updatePose(preview.visiblePose());
+    modelViewer.updateHandTargets(preview.handTargets);
+  }
+  container.querySelector("#poseViewMode").addEventListener("change", event => {
+    preview.mode = event.target.value === "feedback" ? "feedback" : "target";
+    refreshLocalModel();
+  });
+
+  function renderHands() {
+    const panel = container.querySelector("#handPreviewPanel");
+    if (!preview.handSpecs.length) { panel.textContent = "该机型未提供对应手部模型；不使用 W1 灵巧手替代。夹爪字段若存在，仍在该机型关节组中。"; return; }
+    panel.innerHTML = `<div class="card-title">BrainCo Revo1 双灵巧手 · 仅本地预览</div><p class="preview-field-note">原始左右手 URDF / 24 STL、每手6个驱动关节及原始 mimic 联动。手指反馈未接入，不显示假反馈；不加入执行或保存的身体目标。</p>` + preview.handSpecs.map(hand => `
+      <section class="hand-preview-group"><h4>${hand.side === "left" ? "左手" : "右手"} · ${hand.joints.length} DOF</h4>
+      ${hand.joints.map(joint => `<label class="hand-preview-row"><span>${joint.name}</span><input type="range" min="${joint.lower}" max="${joint.upper}" step="0.01" value="${preview.handTargets[hand.side][joint.name]}" data-hand="${hand.side}" data-finger="${joint.name}" aria-label="${hand.side} ${joint.name} 本地预览"><output>${preview.handTargets[hand.side][joint.name].toFixed(2)} rad</output></label>`).join("")}</section>`).join("");
+    panel.querySelectorAll("input[data-hand]").forEach(input => {
+      bindLocalPreviewInput(input, value => preview.setHandTarget(input.dataset.hand,input.dataset.finger,value), () => {
+        input.parentElement.querySelector("output").textContent = preview.handTargets[input.dataset.hand][input.dataset.finger].toFixed(2) + " rad";
+        refreshLocalModel();
+      });
+    });
+  }
+
   // Action Bar Buttons
   container.querySelector("#readCurrentBtn").addEventListener("click", () => {
-    localTargets = { ...currentPositions };
+    preview.copyFeedback();
+    refreshLocalModel();
     _renderSliders();
   });
 
   container.querySelector("#execTargetBtn").addEventListener("click", async () => {
     try {
-      await api.sendJointTargets(localTargets, 1.2);
+      await api.sendJointTargets(preview.commandTargets(), 1.2);
     } catch (err) {
       alert("执行目标位姿失败: " + err.message);
     }
@@ -322,7 +304,7 @@ export function initJointsTab(container) {
         robot_id: api.currentRobotId,
         kind: "joint_targets",
         description: `从关节控制面板保存的目标姿态`,
-        params: { targets: localTargets, duration_s: 1.4 },
+        params: { targets: preview.commandTargets(), duration_s: 1.4 },
       });
       alert(`已保存原子动作 '${name}'`);
     } catch (err) {
@@ -366,7 +348,7 @@ export function initJointsTab(container) {
             <div class="joint-row" data-jname="${j.name}">
               <span class="joint-label" title="${j.label}">${j.label}</span>
               <input type="range" class="joint-slider" min="${j.lower}" max="${j.upper}" step="${step}" value="${tgtVal}">
-              <span class="joint-val-box">${curVal.toFixed(2)}</span>
+              <span class="joint-val-box" title="当前 Mock 反馈（不是目标预览）">${Number.isFinite(currentPositions[j.name]) ? currentPositions[j.name].toFixed(2) : "—"}</span>
               <input type="number" class="joint-input" min="${j.lower}" max="${j.upper}" step="${step}" value="${tgtVal.toFixed(2)}">
             </div>
           `;
@@ -380,16 +362,13 @@ export function initJointsTab(container) {
       const slider = row.querySelector(".joint-slider");
       const numInput = row.querySelector(".joint-input");
 
-      slider.addEventListener("input", (e) => {
-        const v = parseFloat(e.target.value);
-        localTargets[name] = v;
-        numInput.value = v.toFixed(2);
+      bindLocalPreviewInput(slider, value => preview.setTarget(name,value), () => {
+        numInput.value = preview.targets[name].toFixed(2);
+        refreshLocalModel();
       });
-
-      numInput.addEventListener("change", (e) => {
-        const v = parseFloat(e.target.value);
-        localTargets[name] = v;
-        slider.value = v;
+      bindLocalPreviewInput(numInput, value => preview.setTarget(name,value), () => {
+        slider.value = preview.targets[name];
+        refreshLocalModel();
       });
     });
   }
@@ -404,8 +383,12 @@ export function initJointsTab(container) {
       // If descriptor changed, update curve select & slider list
       if (!currentDescriptor || currentDescriptor.id !== desc.id) {
         currentDescriptor = desc;
-        localTargets = { ...(obs.joint_targets || obs.joint_positions || {}) };
-        currentPositions = { ...(obs.joint_positions || {}) };
+        preview.selectRobot(desc,obs,modelForDescriptor(desc)?.hands || []);
+        localTargets = preview.targets;
+        currentPositions = preview.feedback;
+        modelViewer.select(desc);
+        refreshLocalModel();
+        renderHands();
 
         jointSelect.innerHTML = (desc.joints || []).map(j => `
           <option value="${j.name}" ${j.name === selectedJointName ? "selected" : ""}>${j.label}</option>
@@ -419,53 +402,11 @@ export function initJointsTab(container) {
         _renderSliders();
       }
 
-      currentPositions = { ...(obs.joint_positions || {}) };
+      preview.observe(desc.id,obs.joint_positions || {});
+      currentPositions = preview.feedback;
 
       // Update 3D Visual Kinematic Poses
-      const jpos = obs.joint_positions || {};
-      const jtgt = obs.joint_targets || localTargets || {};
-
-      // Animate solid robot links
-      if (desc.robot_type === "r1pro") {
-        for (let i = 0; i < leftArmLinks.length; i++) {
-          const val = jpos[`left_arm_${i + 1}`] || 0;
-          leftArmLinks[i].rotation.y = val * 0.4;
-          leftArmLinks[i].rotation.z = val * 0.3;
-        }
-        for (let i = 0; i < rightArmLinks.length; i++) {
-          const val = jpos[`right_arm_${i + 1}`] || 0;
-          rightArmLinks[i].rotation.y = val * 0.4;
-          rightArmLinks[i].rotation.z = val * 0.3;
-        }
-        // Ghost targets
-        for (let i = 0; i < ghostLeftLinks.length; i++) {
-          const val = jtgt[`left_arm_${i + 1}`] || 0;
-          ghostLeftLinks[i].rotation.y = val * 0.4;
-          ghostLeftLinks[i].rotation.z = val * 0.3;
-        }
-        for (let i = 0; i < ghostRightLinks.length; i++) {
-          const val = jtgt[`right_arm_${i + 1}`] || 0;
-          ghostRightLinks[i].rotation.y = val * 0.4;
-          ghostRightLinks[i].rotation.z = val * 0.3;
-        }
-      } else if (desc.robot_type === "piper_dual") {
-        for (let i = 0; i < leftArmLinks.length; i++) {
-          const val = jpos[`left_j${i + 1}`] || 0;
-          leftArmLinks[i].rotation.y = val * 0.4;
-        }
-        for (let i = 0; i < rightArmLinks.length; i++) {
-          const val = jpos[`right_j${i + 1}`] || 0;
-          rightArmLinks[i].rotation.y = val * 0.4;
-        }
-        for (let i = 0; i < ghostLeftLinks.length; i++) {
-          const val = jtgt[`left_j${i + 1}`] || 0;
-          ghostLeftLinks[i].rotation.y = val * 0.4;
-        }
-        for (let i = 0; i < ghostRightLinks.length; i++) {
-          const val = jtgt[`right_j${i + 1}`] || 0;
-          ghostRightLinks[i].rotation.y = val * 0.4;
-        }
-      }
+      refreshLocalModel();
 
       // Update Motrix Mirror info
       const motrixCountEl = container.querySelector("#motrixClientsCount");
@@ -475,9 +416,7 @@ export function initJointsTab(container) {
 
       // Update 20s curve
       const pVal = currentPositions[selectedJointName] || 0;
-      const tVal = (obs.joint_targets && obs.joint_targets[selectedJointName] !== undefined)
-        ? obs.joint_targets[selectedJointName]
-        : (localTargets[selectedJointName] || pVal);
+      const tVal = localTargets[selectedJointName] ?? pVal;
       curveBuffer.push({ pos: pVal, target: tVal });
       if (curveBuffer.length > 120) curveBuffer.shift();
       drawCurve();
@@ -504,6 +443,10 @@ export function initJointsTab(container) {
     destroy() {
       if (animId) cancelAnimationFrame(animId);
       window.removeEventListener("resize", onResize);
+      resizeObserver.disconnect();
+      modelViewer.destroy();
+      controls.dispose();
+      renderer.dispose();
     }
   };
 }
