@@ -12,7 +12,7 @@ import { initDiagnosticsTab } from "./tabs/diagnostics.js";
 class MotphysRobotApp {
   constructor() {
     this.tabs = {};
-    this.activeTabName = "overview";
+    this.activeTabName = "actions";
     this.cachedState = null;
     this.allRobots = [];
   }
@@ -31,6 +31,7 @@ class MotphysRobotApp {
 
     // 2. Setup tab navigation switching
     this._setupTabSwitching();
+    this.switchTab("actions");
 
     // 3. Setup header controls (robot selector, auth pills, E-Stop)
     this._setupHeaderControls();

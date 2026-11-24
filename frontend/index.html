@@ -27,9 +27,19 @@
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="12 2 2 22 22 22"></polygon>
         </svg>
-        <span>Motphys <span style="font-weight:400; color:var(--text-muted); font-size:14px;">Loop / Robot Web</span></span>
+        <span>motphys <strong class="loop-wordmark">Loop</strong></span>
       </a>
-      <div class="brand-divider"></div>
+      <nav class="primary-nav" aria-label="主导航">
+        <button class="tab-btn" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="actions" aria-selected="true">Actions</button>
+        <button class="tab-btn" data-tab="policy">Policies</button>
+        <button class="tab-btn" data-tab="diagnostics">Diagnostics</button>
+      </nav>
+    </div>
+
+    <span class="header-environment"><span class="environment-dot"></span> Local workspace</span>
+  </header>
+  <section class="robot-control-strip" aria-label="本地机器人控制状态">
       <div class="robot-selector-wrap">
         <label for="robotSelector" style="font-size:12px; color:var(--text-muted); font-weight:500;">机器人机型:</label>
         <select id="robotSelector" class="select-clean" aria-label="选择机器人机型">
@@ -38,9 +48,6 @@
           <option value="dex-w1-mock">Dexforce W1 (20-DOF 人形+URDF)</option>
         </select>
       </div>
-    </div>
-
-    <!-- Status & Authority Indicators & Global E-Stop -->
     <div class="header-status-group">
       <!-- Mode Pill -->
       <span class="pill-badge pill-mock" id="headerModePill" title="当前运行模式: MOCK / SIM / REAL">MOCK</span>
@@ -73,10 +80,10 @@
         软件急停 (Space)
       </button>
     </div>
-  </header>
+  </section>
 
   <section class="workspace-context" aria-label="工作区上下文">
-    <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><span>Robot Web</span><span aria-hidden="true">/</span><strong id="currentSectionCrumb">总览与拓扑</strong></div>
+    <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><span>Robot Web</span><span aria-hidden="true">/</span><strong id="currentSectionCrumb">动作与工作流</strong></div>
     <div class="mock-disclosure" role="note">LOCAL MOCK · 无真实机器人连接 · 角色与 Lease 仅本地演示</div>
   </section>
 
@@ -147,9 +154,9 @@
 
   <!-- App Main Content Panes -->
   <main class="app-content">
-    <div id="tabPaneOverview" class="tab-panel active"></div>
+    <div id="tabPaneOverview" class="tab-panel"></div>
     <div id="tabPaneJoints" class="tab-panel"></div>
-    <div id="tabPaneActions" class="tab-panel"></div>
+    <div id="tabPaneActions" class="tab-panel active"></div>
     <div id="tabPaneNavigation" class="tab-panel"></div>
     <div id="tabPanePerception" class="tab-panel"></div>
     <div id="tabPanePolicy" class="tab-panel"></div>

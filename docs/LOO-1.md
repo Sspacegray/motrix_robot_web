@@ -57,3 +57,13 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 导入排除了 `.env`/密钥/token/credentials 文件、旧 `.git` 历史、虚拟环境、缓存、日志、运行数据、symlink、生成 egg-info。未读取 `.env`/密钥内容。源码扫描只输出文件路径/计数，不输出疑似秘密值。临时归档因设备允许根路径限制无法传入 box；未重试该受限路径，后续只用 sanctioned CopyToBox 对授权项目内的选定普通文件逐个复制。
 
 `gv` 按本机现有帮助登记到 `/workspace/loo1-tracking/LOO-1.{json,log}`；没有宣称同步远端 grok_viewer hub。当前技能目录查询无 `huashu` 匹配，未因此阻塞主线。
+
+## 用户截图纠正后的 UI 增量（同一 PR，不重建）
+
+- 这批不是仅改颜色：顶栏改为品牌 + Overview / Actions / Policies / Diagnostics（全部映射已有功能），机器人选择与权限/急停移入独立状态条。默认进入 Actions，使用灰画布、面包屑、独立白色标题卡与底部二级 tabs、独立紧凑 Jobs 表卡。
+- Jobs 增加真实数据搜索、状态筛选、计数与空态说明；`Mock dry-run` 调用当前机器人第一个现有工作流的真实本地验证 API，不造任务行、不发送运动指令，完成后打开同一任务的详情。搜索/切机丢弃旧请求；遥测任务状态变化会更新任务表。
+- 760px 抽屉改成 Execution task 标题、独立状态/ID 行、两列元信息、Steps 表、黑底 Logs 与 Follow；遮罩、Esc、焦点约束/恢复和滚动锁。Retry 仅对有源工作流的终态任务启用，并明确 `Retry dry-run`；不会用重试按钮意外发起 Live。Cancel 仅运行中显示，走原有停机/取消 API。
+- 新增 `frontend/js/ui-format.js` 用于 HTML 转义、状态/文本筛选与 Asia/Shanghai 时间；新增 `tests/test_ui_format.mjs` 对这些纯函数及接线做回归。禁用未接线的可视编排新建按钮，原子动作创建及 JSON 导入/导出仍保留。
+- 新增/修改目的：完整修正信息层级与执行详情，保留原生 ESM/FastAPI 离线架构、全部原安全边界及许可证。回退：对本 UI 增量提交创建新的 revert（不强推），不回退之前的后端安全修复。
+- 验证：`uv run pytest -q` 为 62 passed、1 条原上游弃用警告；`node --test tests/test_client_api.mjs tests/test_ui_format.mjs` 为 7 passed；全部 ESM 语法与 `git diff --check` 通过。R1Pro 20DOF 与 Piper 14DOF 的 Action Layout 动态回归已包含在 Node 测试中。
+- 视觉状态：子代理尝试 Read 用户图片时工具明确拒绝为父代理私有附件；未绕过或读取。仅按用户明确描述和只读 Loop 源码重构。这里不宣称已与图片逐像素匹配，也没有把单元测试当作浏览器验收。父代理需亲自读取原图，并在 box `http://127.0.0.1:8096/` 强制刷新查看默认 Actions → Jobs，点击 `Mock dry-run` 查看遮罩抽屉；截图建议保存 `/workspace/loo1-tracking/loop-jobs-v2.png` 与 `loop-drawer-v2.png`（尚未生成）。Mac 原目录仍未同步。
