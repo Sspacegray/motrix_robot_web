@@ -79,6 +79,9 @@ class MotphysRobotApp {
       activePanel.classList.add("active");
     }
 
+    const crumb = document.querySelector("#currentSectionCrumb");
+    if (crumb) crumb.textContent = document.querySelector(`[data-tab="${tabName}"]`)?.textContent.trim() || tabName;
+
     // Trigger update on active tab if state is cached
     if (this.cachedState && this.tabs[tabName] && typeof this.tabs[tabName].update === "function") {
       this.tabs[tabName].update(this.cachedState);
@@ -103,7 +106,7 @@ class MotphysRobotApp {
       const defaultId = this.allRobots.find((r) => r.id === "r1pro-mock") ? "r1pro-mock" : this.allRobots[0]?.id;
       if (defaultId) {
         selector.value = defaultId;
-        api.setRobotId(defaultId, true);
+        await api.setRobotId(defaultId, true);
       }
     } catch (err) {
       console.error("Failed to load robots:", err);
@@ -116,7 +119,19 @@ class MotphysRobotApp {
     const selector = document.querySelector("#robotSelector");
     selector.addEventListener("change", async (e) => {
       const newId = e.target.value;
-      api.setRobotId(newId);
+      const oldId = api.currentRobotId;
+      selector.disabled = true;
+      try {
+        await api.setRobotId(newId);
+        this.cachedState = null;
+        drawer.close();
+      } catch (err) {
+        selector.value = oldId;
+        this._showToast(`切换失败，旧机心跳已停止；未向新机授权: ${err.message}`, "danger");
+        return;
+      } finally {
+        selector.disabled = false;
+      }
       this._showToast(`已切换至机器人: ${newId}`, "info");
 
       // Verify capabilities & auto switch away from navigation tab if unsupported
@@ -183,7 +198,7 @@ class MotphysRobotApp {
   async triggerEstop(reason = "Manual Trigger") {
     try {
       const res = await api.triggerEstop(reason);
-      this._showToast("【软件急停已生效】所有动作下发已被硬件安全网关强制阻断", "danger");
+      this._showToast("本地软件急停已锁存；仅 Mock 停机，不代表硬件断电或远程停机送达", "danger");
       document.querySelector("#modalEstopLatched").classList.add("open");
       document.querySelector("#estopReasonDetail").textContent = `原因: ${reason} (时间: ${new Date().toLocaleTimeString()})`;
     } catch (err) {
@@ -235,6 +250,15 @@ class MotphysRobotApp {
 
   _updateCapabilitiesUI(caps) {
     if (!caps) return;
+    const supported = {navigation: caps.navigation, policy: caps.policy_inference,
+      perception: caps.head_depth || caps.yolo_foundation_pose || caps.aruco,
+      joints: caps.joints, actions: caps.atomic_actions || caps.workflows};
+    for (const [tab, enabled] of Object.entries(supported)) {
+      const button = document.querySelector(`[data-tab="${tab}"]`);
+      if (button) { button.hidden = !enabled; button.style.display = enabled ? "inline-flex" : "none"; }
+      if (!enabled && this.activeTabName === tab) this.switchTab("overview");
+    }
+    if (!caps) return;
     const navTabBtn = document.querySelector('#tabBtnNav');
     if (navTabBtn) {
       if (!caps.navigation) {
@@ -259,9 +283,11 @@ class MotphysRobotApp {
     const obs = state.observation || {};
     const auth = state.authority || {};
 
+    if (!obs.connected) api.stopHeartbeat();
+
     // 1. Update Header Mode Pill (MOCK / SIM / REAL)
     const modePill = document.querySelector("#headerModePill");
-    const mode = (desc.mode || "mock").toUpperCase();
+    const mode = desc.integration_status === "unimplemented" ? "UNAVAILABLE" : (desc.mode || "mock").toUpperCase();
     if (modePill) {
       modePill.textContent = mode;
       modePill.className = `pill-badge ${mode === "REAL" ? "pill-real" : mode === "SIM" ? "pill-sim" : "pill-mock"}`;
@@ -272,7 +298,7 @@ class MotphysRobotApp {
     const perm = auth.task_permission || "operator";
     if (authPill) {
       authPill.setAttribute("data-perm", perm);
-      authPill.textContent = `Perm: ${perm.toUpperCase()}`;
+      authPill.textContent = `Demo role: ${perm.toUpperCase()}`;
     }
 
     // 3. Update Header Lease Pill
@@ -281,11 +307,11 @@ class MotphysRobotApp {
       if (auth.lease_active) {
         leasePill.setAttribute("data-active", "true");
         leasePill.className = "pill-badge pill-auth active";
-        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; animation:pulse-green 1.2s infinite;"></span> Lease: ${auth.lease_id || "Active"}`;
+        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; animation:pulse-green 1.2s infinite;"></span> Mock Lease: ${auth.lease_id || "Active"}`;
       } else {
         leasePill.setAttribute("data-active", "false");
         leasePill.className = "pill-badge pill-auth";
-        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span> Lease: 只读未授权`;
+        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span> Mock Lease: 只读未授权`;
       }
     }
 

@@ -40,6 +40,7 @@ class RobotSafetyGate:
         idle_timeout_s: float = 300.0,
         lease_ttl_s: float = 120.0,
     ) -> None:
+        self.on_timeout: Callable[[str], None] | None = None
         self.descriptor = descriptor
         self.hb_timeout_s = hb_timeout_s
         self.idle_timeout_s = idle_timeout_s
@@ -75,6 +76,9 @@ class RobotSafetyGate:
         confirm_safety: bool = False,
         lease_source: str = "edge_lease_proxy",
     ) -> AuthorityState:
+        self.check_watchdogs()
+        if self._lease_active:
+            raise SafetyError(409, "lease_already_active", "已有活动租约，请先释放，不能静默接管。")
         if self.descriptor.readonly_only:
             raise SafetyError(403, "readonly_robot", f"机器人 {self.descriptor.name} 配置为硬只读模式，禁止获取写控租约。")
         if not confirm_safety:
@@ -102,9 +106,11 @@ class RobotSafetyGate:
         return self.snapshot()
 
     def heartbeat(self, lease_id: str | None = None) -> AuthorityState:
+        if self.check_watchdogs():
+            raise SafetyError(409, "lease_expired", "租约已过期并停机，必须显式重新授权。")
         if not self._lease_active:
-            return self.snapshot()
-        if lease_id and self._lease_id and lease_id != self._lease_id:
+            raise SafetyError(403, "lease_required", "无活动租约，心跳不能恢复控制。")
+        if not lease_id or lease_id != self._lease_id:
             raise SafetyError(409, "lease_mismatch", "租约 ID 不匹配，可能已被其他会话接管或已失效。")
         now = time.monotonic()
         self._last_hb_mono = now
@@ -116,7 +122,6 @@ class RobotSafetyGate:
         if self._lease_active:
             now = time.monotonic()
             self._last_action_mono = now
-            self._last_hb_mono = now
 
     def trigger_estop(self, source: str = "web_ui", reason: str = "Operator E-Stop") -> AuthorityState:
         """Always allowed regardless of lease or task permission (bypass queue)."""
@@ -156,11 +161,13 @@ class RobotSafetyGate:
 
         if reason:
             self.release_lease()
-            if on_timeout:
-                on_timeout(reason)
+            callback = on_timeout or self.on_timeout
+            if callback:
+                callback(reason)
         return reason
 
     def require_control_authority(self, obs: ObservationSnapshot | None = None) -> None:
+        self.check_watchdogs()
         if self.descriptor.readonly_only:
             raise SafetyError(403, "readonly_robot", "当前机器人处于硬只读模式。")
         if self._estop_latched:
@@ -170,6 +177,8 @@ class RobotSafetyGate:
         if not self._lease_active or not self._lease_id:
             raise SafetyError(403, "lease_required", "未持有有效底层控制租约 (Lease)，请先在顶栏或安全栏授权控制。")
         if obs is not None:
+            if not obs.connected:
+                raise SafetyError(409, "disconnected", "无有效机器人连接。")
             if obs.feedback_age_ms > 1000.0:
                 raise SafetyError(409, "stale_feedback", f"状态反馈陈旧 ({obs.feedback_age_ms:.0f} ms > 1000 ms)，安全门禁拒绝下发。")
             blocks = [it for it in obs.interlocks if it.severity == "block"]

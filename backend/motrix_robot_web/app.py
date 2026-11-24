@@ -58,7 +58,13 @@ class AppContext:
             rid: RobotSafetyGate(conn.descriptor) for rid, conn in self.connectors.items()
         }
         self.runner = WorkflowRunner(self.store)
+        for rid, gate in self.gates.items():
+            gate.on_timeout = lambda reason, rid=rid: self.stop_robot(rid, f"watchdog:{reason}")
         self._bg_task: asyncio.Task[Any] | None = None
+
+    def stop_robot(self, robot_id: str, reason: str) -> None:
+        self.connectors[robot_id].safe_stop(reason)
+        self.runner.abort_robot_jobs(robot_id, reason)
 
     def _load_config_connectors(self, config_path: Path | None) -> None:
         if not config_path or not config_path.exists():
@@ -171,6 +177,7 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
                     "name": d.name,
                     "robot_type": d.robot_type,
                     "mode": d.mode,
+                    "integration_status": d.integration_status,
                     "connector_type": d.connector_type,
                     "readonly_only": d.readonly_only,
                     "connected": obs.connected,
@@ -239,23 +246,29 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
     # ---- Authority: High-Level Permission vs Underlying Lease & Lease-Free E-Stop ----
     @app.post("/api/robots/{robot_id}/permission")
     def set_permission(robot_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        _, gate = ctx.get_robot(robot_id)
+        conn, gate = ctx.get_robot(robot_id)
         perm: TaskPermission = body.get("task_permission", "operator")
         if perm not in ("viewer", "operator", "admin"):
             raise SafetyError(400, "invalid_permission", f"无效高层任务权限：{perm}")
+        if perm == "viewer":
+            ctx.stop_robot(robot_id, "permission_downgrade")
         auth = gate.set_task_permission(perm, body.get("operator_name"))
         return {"authority": auth.model_dump()}
 
     @app.post("/api/robots/{robot_id}/lease/acquire")
     def acquire_lease(robot_id: str, req: LeaseRequest) -> dict[str, Any]:
         conn, gate = ctx.get_robot(robot_id)
-        source = f"{conn.descriptor.connector_type}_session"
+        source = "mock_local_lease_not_edge"
         auth = gate.acquire_lease(
             operator_name=req.operator_name,
             task_permission=req.task_permission,
             confirm_safety=req.confirm_safety,
             lease_source=source,
         )
+        for other_id, other_gate in ctx.gates.items():
+            if other_id != robot_id and other_gate.snapshot().lease_active:
+                ctx.stop_robot(other_id, "robot_switch")
+                other_gate.release_lease()
         return {"authority": auth.model_dump()}
 
     @app.post("/api/robots/{robot_id}/lease/release")
@@ -281,7 +294,7 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
         conn.safe_stop(f"estop:{payload.reason}")
         ctx.runner.abort_robot_jobs(robot_id, f"estop:{payload.reason}")
         auth = gate.trigger_estop(source=payload.source, reason=payload.reason)
-        return {"accepted": True, "bypass_lease": True, "authority": auth.model_dump()}
+        return {"accepted": True, "bypass_lease": True, "scope": "local_mock" if conn.descriptor.connector_type == "mock" else "local_latch_only", "remote_stop_confirmed": False, "authority": auth.model_dump()}
 
     @app.post("/api/robots/{robot_id}/estop/clear")
     def clear_estop(robot_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -356,7 +369,9 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
         conn, gate = ctx.get_robot(robot_id)
         # Reading/picking 3D point or inspecting perception is allowed in read-only;
         # chassis fine approach or starting GPU workers can run under operator permission/lease.
-        if action == "aruco_set_fine" and bool((body or {}).get("enabled")):
+        stop_actions = {"stop_yolo", "stop_foundation_pose", "aruco_stop_pose"}
+        stopping_fine = action == "aruco_set_fine" and not bool((body or {}).get("enabled"))
+        if action not in stop_actions | {"pick_3d"} and not stopping_fine:
             gate.require_control_authority(conn.get_observation())
         return conn.control_perception(action, body or {})
 
@@ -364,14 +379,15 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
     @app.post("/api/robots/{robot_id}/policy/{action}")
     def policy_action(robot_id: str, action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         conn, gate = ctx.get_robot(robot_id)
-        if action == "start_infer":
+        if action != "stop_infer":
             gate.require_control_authority(conn.get_observation())
         return conn.control_policy(action, body or {})
 
     # ---- Fault Injection (Mock Interlock Drills) ----
     @app.post("/api/robots/{robot_id}/faults/{fault_type}")
     def inject_fault(robot_id: str, fault_type: str) -> dict[str, Any]:
-        conn, _ = ctx.get_robot(robot_id)
+        conn, gate = ctx.get_robot(robot_id)
+        gate.require_control_authority(conn.get_observation())
         return conn.inject_fault(fault_type)
 
     # ---- Atomic Actions & R1 Pro JSON Compatibility ----
@@ -461,6 +477,9 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
 
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(job_id: str) -> dict[str, Any]:
+        existing = ctx.store.get_job(job_id)
+        if existing and existing.state == "Running" and existing.lease_id:
+            ctx.stop_robot(existing.robot_id, "job_cancel")
         job = ctx.runner.cancel_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")

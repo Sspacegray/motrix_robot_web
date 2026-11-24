@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 RobotMode = Literal["mock", "sim", "real"]
 ConnectorType = Literal["mock", "edge", "r1pro", "piper_lelab", "dex_w1"]
@@ -59,6 +59,7 @@ class RobotDescriptor(BaseModel):
     name: str
     robot_type: Literal["r1pro", "piper_dual", "dexforce_w1"]
     mode: RobotMode = "mock"
+    integration_status: Literal["mock", "unimplemented"] = "mock"
     connector_type: ConnectorType = "mock"
     readonly_only: bool = False
     arms_scope: list[str] = Field(default_factory=lambda: ["left", "right"])
@@ -177,6 +178,7 @@ class PolicyState(BaseModel):
 
 
 class ObservationSnapshot(BaseModel):
+    telemetry_source: Literal["mock", "unavailable"] = "mock"
     robot_id: str
     timestamp: float
     connected: bool = True
@@ -317,12 +319,14 @@ class LeaseRequest(BaseModel):
 
 
 class JointTargetsRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     targets: dict[str, float]
     speed_scale: float = 0.4
-    duration_s: float = 1.2
+    duration_s: float = Field(default=1.2, gt=0, le=30)
 
 
 class EEStepRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     arm: Literal["left", "right"] = "left"
     dx: float = 0.0
     dy: float = 0.0
@@ -333,13 +337,15 @@ class EEStepRequest(BaseModel):
 
 
 class ChassisVelRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     vx: float = 0.0
     vy: float = 0.0
     omega: float = 0.0
-    duration_s: float = 0.4
+    duration_s: float = Field(default=0.4, gt=0, le=3)
 
 
 class NavGoalRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     x: float
     y: float
     yaw: float = 0.0

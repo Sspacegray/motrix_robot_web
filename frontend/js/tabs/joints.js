@@ -11,22 +11,22 @@ export function initJointsTab(container) {
         <div class="viewport-3d-box" id="viewportBox">
           <canvas class="viewport-3d-canvas" id="viewportCanvas"></canvas>
           <div class="viewport-overlay-hud" id="viewportHud">
-            3D Viewport · Orbit Controls · Real: Solid / Target: Ghost
+            Mock 程序骨架 · 实线反馈 / 虚线目标 · 未加载 W1 URDF 网格
           </div>
         </div>
 
         <!-- Motrix WASM Read-Only Mirror Status Box -->
         <div class="card" style="margin-top: 14px;">
           <div class="card-header" style="margin-bottom:6px; padding-bottom:6px;">
-            <span class="card-title" style="font-size:13px;">Motrix WASM 仿真只读镜像桥</span>
-            <span class="badge badge-passed" id="motrixIsoBadge">Isolation: OK</span>
+            <span class="card-title" style="font-size:13px;">Motrix 只读消息桥（WASM 仿真器未接入）</span>
+            <span class="badge badge-passed" id="motrixIsoBadge">本地协议隔离</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between; margin-bottom:6px;">
             <span>WebSocket 地址: <code style="font-family:var(--font-mono); color:var(--text-main);">/ws/motrix</code></span>
             <span>已连接查看器: <b id="motrixClientsCount">0</b></span>
           </div>
           <p style="font-size:11px; color:#64748b; background:var(--bg-subtle); padding:6px 10px; border-radius:var(--radius-sm);">
-            严格只读隔离断言：本镜像桥零加载底层 CAN/ROS 写驱动，绝不通过 WebSocket 反向写控机器人，仅向 Motrix 浏览器仿真器广播 Observation 姿态。
+            严格只读隔离断言：本镜像桥零加载底层 CAN/ROS 写驱动，绝不通过 WebSocket 反向写控机器人，仅提供 Observation 广播协议；尚未接入 Motrix WASM 客户端。
           </p>
         </div>
 

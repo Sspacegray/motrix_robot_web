@@ -22,3 +22,6 @@ logs/
 runtime/
 runtime_data/
 node_modules/
+
+# All locally generated demo/Mock stores
+/data/

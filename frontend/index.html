@@ -47,18 +47,18 @@
 
       <!-- Operator Task Permission Pill -->
       <button class="pill-badge pill-auth" id="headerAuthPill" title="点击快速切换高层任务权限 (Viewer / Operator / Admin)" data-perm="operator">
-        Perm: OPERATOR
+        Demo role: OPERATOR
       </button>
 
       <!-- Underlying Control Lease Pill -->
       <button class="pill-badge pill-auth" id="headerLeasePill" title="底层控制 Lease: 点击申请或释放控制权" data-active="false">
         <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span>
-        Lease: 只读未授权
+        Mock Lease: 只读未授权
       </button>
 
       <!-- Connection & Latency Indicator -->
-      <span style="font-family:var(--font-mono); font-size:11px; color:var(--success); padding:0 4px;" id="headerConnAge" title="DDS / CAN 反馈延迟与采样频率">
-        18ms · 30Hz
+      <span style="font-family:var(--font-mono); font-size:11px; color:var(--success); padding:0 4px;" id="headerConnAge" title="Mock 反馈延迟与采样频率（非真实 DDS/CAN）">
+        等待 Mock 反馈
       </span>
 
       <div class="brand-divider" style="height:16px;"></div>
@@ -74,6 +74,11 @@
       </button>
     </div>
   </header>
+
+  <section class="workspace-context" aria-label="工作区上下文">
+    <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><span>Robot Web</span><span aria-hidden="true">/</span><strong id="currentSectionCrumb">总览与拓扑</strong></div>
+    <div class="mock-disclosure" role="note">LOCAL MOCK · 无真实机器人连接 · 角色与 Lease 仅本地演示</div>
+  </section>
 
   <!-- Secondary Navigation Tabs Bar (Motphys Loop Layout) -->
   <nav class="sub-nav-bar" aria-label="功能域导航">
@@ -136,7 +141,7 @@
     </div>
 
     <div class="sub-nav-right">
-      <span>Motrix Sim 只读镜像: <strong style="color:var(--accent);">Active</strong></span>
+      <span>Motrix: <strong style="color:var(--text-muted);">只读 Mock · 未接仿真器</strong></span>
     </div>
   </nav>
 
@@ -165,7 +170,7 @@
           注意：软件急停 ≠ 硬件断电急停。
         </p>
         <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-          当前所有运动下发通道与自主工作流已被网关全部阻断，底层 Lease 控制权已强制撤销。若现场发生物理碰撞或机械危险，请立即按下物理断电蘑菇头急停！
+          本地 Mock 运动与工作流已停止，Mock Lease 已撤销；未连接真实硬件，不能确认任何远程停机。若现场发生物理碰撞或机械危险，请立即按下物理断电蘑菇头急停！
         </p>
         <div style="background:var(--bg-subtle); padding:10px; border-radius:var(--radius-sm); font-size:12px; font-family:var(--font-mono); margin-bottom:14px;" id="estopReasonDetail">
           原因: 手动触发 (时间: --)
@@ -185,7 +190,7 @@
       </div>
       <div class="modal-body">
         <div style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
-          获取 Lease 后将拥有实机运动控制权。系统将启动 <strong>3 秒操作心跳看门狗</strong>（断联自动急停，不自动恢复）；持续 5 分钟闲置将自动解除授权。
+          本版本 Lease 只授权本地 Mock 演示，不具备实机控制权。系统将启动 <strong>3 秒操作心跳看门狗</strong>（超时停机放权，不自动恢复）；持续 5 分钟闲置将自动解除授权。
         </div>
 
         <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:14px;">

@@ -4,12 +4,13 @@ import { drawer } from "../drawer.js";
 
 export function initOverviewTab(container) {
   container.innerHTML = `
+    <div class="workspace-heading"><div><div class="eyebrow">ROBOT WORKSPACE / LOCAL PREVIEW</div><h1>机器人工作台</h1><p>观察状态、编排任务和验证安全流程。所有数值与执行结果均来自本地 Mock。</p></div><span class="workspace-readonly">默认只读 · 真机接入未开放</span></div>
     <!-- Top KPI Cards -->
     <div class="grid-4" style="margin-bottom: 20px;">
       <div class="kpi-card">
         <div class="kpi-label">连接与反馈</div>
         <div class="kpi-val" id="kpiConn">-- <span class="kpi-sub" id="kpiAge">-- ms</span></div>
-        <div class="kpi-sub" id="kpiHz">-- Hz · DDS/CAN</div>
+        <div class="kpi-sub" id="kpiHz">-- Hz · 本地合成数据</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">底层租约 (Lease)</div>
@@ -31,7 +32,7 @@ export function initOverviewTab(container) {
     <!-- Architecture & Network Scope Banner -->
     <div class="card" style="border-left: 4px solid var(--accent);">
       <div class="card-header" style="margin-bottom:8px; padding-bottom:6px;">
-        <span class="card-title">高层控制与感知架构对齐（对齐路线图规范）</span>
+        <span class="card-title">连接范围与安全边界</span>
         <span class="badge badge-passed" id="overviewConnectorBadge">Connector: mock</span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:8px;" id="overviewNetworkNote">
@@ -84,14 +85,12 @@ export function initOverviewTab(container) {
       const connEl = container.querySelector("#kpiConn");
       const ageEl = container.querySelector("#kpiAge");
       const hzEl = container.querySelector("#kpiHz");
-      if (connEl && ageEl && hzEl) {
+      if (connEl && hzEl) {
         if (obs.connected) {
-          connEl.innerHTML = `<span style="color:var(--success);">Connected</span>`;
-          ageEl.textContent = `${obs.feedback_age_ms || 18} ms`;
+          connEl.innerHTML = `<span style="color:var(--accent);">Mock 在线</span> <span class="kpi-sub">${obs.feedback_age_ms ?? "—"} ms</span>`;
           hzEl.textContent = `${obs.measured_hz || 30} Hz · ${String(desc.connector_type || "mock").toUpperCase()}`;
         } else {
-          connEl.innerHTML = `<span style="color:var(--danger);">Disconnected</span>`;
-          ageEl.textContent = `${obs.feedback_age_ms || 2400} ms`;
+          connEl.innerHTML = `<span style="color:var(--text-muted);">未连接</span>`;
           hzEl.textContent = `0 Hz`;
         }
       }
@@ -113,8 +112,8 @@ export function initOverviewTab(container) {
       const bat = obs.battery || {};
       const kpiBat = container.querySelector("#kpiBattery");
       const kpiPow = container.querySelector("#kpiPower");
-      if (kpiBat) kpiBat.textContent = `${bat.percentage || 88} %`;
-      if (kpiPow) kpiPow.textContent = `${bat.voltage_v || 48.2} V · ${bat.current_a || -2.4} A`;
+      if (kpiBat) kpiBat.textContent = `${obs.connected ? (bat.percentage ?? "—") : "—"} %`;
+      if (kpiPow) kpiPow.textContent = `${obs.connected ? (bat.voltage_v ?? "—") : "—"} V · ${obs.connected ? (bat.current_a ?? "—") : "—"} A`;
 
       // KPI 4: Motors
       const motors = obs.motors || [];
@@ -126,6 +125,8 @@ export function initOverviewTab(container) {
           motorStatusEl.innerHTML = `<span style="color:var(--danger);">${blocks.length} 轴阻断</span>`;
         } else if (warns.length > 0) {
           motorStatusEl.innerHTML = `<span style="color:var(--warning);">${warns.length} 轴告警</span>`;
+        } else if (!obs.connected || !motors.length) {
+          motorStatusEl.textContent = "无遥测";
         } else {
           motorStatusEl.innerHTML = `<span style="color:var(--success);">全部正常</span>`;
         }

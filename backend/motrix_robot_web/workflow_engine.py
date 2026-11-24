@@ -121,6 +121,8 @@ class WorkflowRunner:
                 if wf_step.delay_s > 0:
                     await asyncio.sleep(min(wf_step.delay_s, 0.5))
 
+                if job.job_id in self._cancel_flags:
+                    raise asyncio.CancelledError("canceled_before_dispatch")
                 params = {**action.params, **wf_step.overrides}
                 if dry_run:
                     step_obj.detail = f"dry-run validated ({action.kind})"
@@ -153,6 +155,8 @@ class WorkflowRunner:
             self.store.save_job(job)
 
         except asyncio.CancelledError as exc:
+            if not dry_run:
+                connector.safe_stop("workflow_canceled")
             for st in job.steps:
                 if st.phase in ("pending", "running"):
                     st.phase = "canceled"
@@ -163,6 +167,8 @@ class WorkflowRunner:
             job.logs.append(f"{self._ts()} [workflow] Canceled ({exc})")
             self.store.save_job(job)
         except Exception as exc:
+            if not dry_run:
+                connector.safe_stop("workflow_failed")
             msg = exc.message if isinstance(exc, SafetyError) else str(exc)
             failed_marked = False
             for st in job.steps:
@@ -188,6 +194,7 @@ class WorkflowRunner:
         self, kind: str, params: dict[str, Any], connector: RobotConnector, gate: RobotSafetyGate
     ) -> str:
         obs = connector.get_observation()
+        gate.require_control_authority(obs)
         if kind == "joint_targets":
             raw_targets = params.get("targets") or {}
             validated = gate.validate_joint_targets(raw_targets, obs)

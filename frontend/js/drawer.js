@@ -18,6 +18,8 @@ class ExecutionDrawer {
 
     this.panel = document.createElement("div");
     this.panel.className = "drawer-panel";
+    this.panel.setAttribute("role", "dialog");
+    this.panel.setAttribute("aria-label", "Execution details");
     this.panel.innerHTML = `
       <div class="drawer-header">
         <div class="drawer-title-wrap">
@@ -26,7 +28,7 @@ class ExecutionDrawer {
         </div>
         <div class="drawer-actions">
           <button class="btn btn-sm" id="drawerRetryBtn">Retry</button>
-          <button class="btn btn-sm btn-danger" id="drawerCancelBtn" style="display:none;">Stop</button>
+          <button class="btn btn-sm btn-danger" id="drawerCancelBtn" style="display:none;">Cancel</button>
           <button class="drawer-close-btn" id="drawerCloseBtn" title="Close (Esc)">✕</button>
         </div>
       </div>
