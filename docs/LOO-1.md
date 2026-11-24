@@ -144,3 +144,13 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 - 能力：只读 `GET /api/robots/{id}/navigation/map` 不申请 Lease、不下发目标。R1 Mock 返回 `source=mock_from_occupancy`、`live=false`。W1/Piper `supported=false` 并说明不使用其他机型地图替代；全局导航入口仍保留并禁用。安全写接口与状态机未改。
 - 验证：`tests/test_map_cloud.mjs`、`tests/test_map_cloud_api.py` 与既有套件。浏览器中 3D 装配与轨道交互须另验。回退请对本次提交新建 revert。
 - Mac：a380b9c / pose-hands-v3 最小同步在冲突核验通过后因本机 Shell temporarily unreachable 中断，本批 map-cloud 因此也尚未同步 Mac。
+
+
+## 2026-11-24 Cancel短任务竞态与3D只读交互（cancel-map-v5）
+
+- Cancel根因：同步取消接口在线程池设置标记；worker仅在sleep之前检查，最后一次sleep之后可直接写Succeeded。接口也曾对已完成任务返回200不说明未取消。现在取消接口与worker在同一事件循环串行处理；Running取消立即持久化Canceled/exit130并唤醒等待，worker在初始/等待后/成功提交前再次检查，不能覆盖已接受的取消。重复取消Canceled幂等；真正已经完成的任务返回409 job_already_finished，不改写历史或假报取消成功。Dry-run不发运动、不申请Lease、不调用设备停机。
+- 地图根因：2D全局mousemove/up未按视图隔离，切3D时未清空尚未结束的2D drag；隐藏2D canvas还带inline display:block。新增无API的map-interactions.js事件边界：仅支持导航且当前2D时允许编辑；切视图、3D pointerdown/mousedown/wheel/click、失焦、丢失鼠标按键均清除2D拖动状态，不修改既有目标/标记。3D orbit/zoom不调用导航/Lease API。显式隐藏2D画布；按视图切说明/图例，点云HUD仅3D可见。
+- 回归：test_cancel_race.py覆盖worker启动前、短任务最后await、等待唤醒、后续步骤跳过、已完成409与3组短HTTP取消持久记录；test_map_interactions.mjs用生产事件处理器及原生EventTarget/Event冒泡测试夹具，覆盖3D拖动/滚轮/拖后click冒泡、残留mousedown、2D↔3D、丢失mouseup与禁用/销毁状态。该测试不等于浏览器/WebGL验收，仍由父代理复验。
+- Mac已离线，本批不尝试连接、不同步、不部署。box主预览8096待父浏览器复验；地图点云生成与原Mock来源标记未改。回退请新建revert并保留配置/运行数据。
+
+- 本批结果：Python 77 passed、1条既有Starlette/httpx弃用警告；Node 31 passed；全部原生ESM语法、diff检查通过；12个变更文件秘密/运行路径扫描0发现。未连接/部署Mac，也未运行远程设备控制。

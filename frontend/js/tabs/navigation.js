@@ -2,6 +2,7 @@
 import { api } from "../api.js";
 import { occupancyToPointCloud, lumaFromRgba, MOCK_CLOUD_LABEL } from "../map-cloud.js";
 import { createMapCloudViewer } from "../map-cloud-viewer.js";
+import { bindMapInteractions } from "../map-interactions.js";
 
 export function initNavigationTab(container) {
   let mapImage = null;
@@ -16,6 +17,7 @@ export function initNavigationTab(container) {
   let dragStartPos = null;
   let currentNavMode = "MANUAL";
   let manualInterval = null;
+  let mapSupported = false;
 
   container.innerHTML = `
     <!-- Non-navigation Robot Banner (hidden if navigation supported) -->
@@ -47,17 +49,18 @@ export function initNavigationTab(container) {
         </div>
 
         <!-- Canvas Container -->
-        <p class="preview-field-note" id="mapCloudNote">默认 2D 占用栅格来自本地 mx_map。3D 点云为同一栅格生成的 Mock 示例，不是真实激光雷达或现场采集。</p>
+        <p class="preview-field-note" id="mapCloudNote">2D 占用栅格 · 本地 mx_map 参考图，非实时采集。拖动仅设置本地目标；下发仍需显式操作与 Lease。</p>
         <div style="position:relative; width:100%; height:460px; background:#1e293b; border-radius:var(--radius-sm); overflow:hidden; border:1px solid var(--border);">
           <canvas id="navMapCanvas" width="700" height="460" style="width:100%; height:100%; display:block; cursor:crosshair;"></canvas>
           <canvas id="navCloudCanvas" class="nav-cloud-canvas" width="700" height="460" hidden></canvas>
+          <div id="navCloudHud" class="nav-cloud-hud" hidden></div>
           <div style="position:absolute; bottom:12px; left:12px; background:rgba(15,23,42,0.8); color:#f8fafc; font-size:11px; padding:4px 8px; border-radius:4px; font-family:var(--font-mono); pointer-events:none;" id="navCoordsOverlay">
             X: 0.00m | Y: 0.00m | Yaw: 0.0°
           </div>
-          <div style="position:absolute; top:12px; right:12px; display:flex; flex-direction:column; gap:4px; font-size:11px; color:#cbd5e1; background:rgba(15,23,42,0.75); padding:6px 10px; border-radius:4px;">
-            <div><span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#0d9488; margin-right:4px;"></span>机器人实时位姿</div>
+          <div id="navMapLegend" style="position:absolute; top:12px; right:12px; display:flex; flex-direction:column; gap:4px; font-size:11px; color:#cbd5e1; background:rgba(15,23,42,0.75); padding:6px 10px; border-radius:4px;">
+            <div><span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#0d9488; margin-right:4px;"></span>Mock 机器人位姿</div>
             <div><span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#f59e0b; margin-right:4px;"></span>目标位姿 (Goal)</div>
-            <div><span style="display:inline-block; width:12px; height:2px; background:#38bdf8; margin-right:4px; vertical-align:middle;"></span>全局规划路径</div>
+            <div><span style="display:inline-block; width:12px; height:2px; background:#38bdf8; margin-right:4px; vertical-align:middle;"></span>Mock 规划路径</div>
           </div>
         </div>
 
@@ -189,7 +192,7 @@ export function initNavigationTab(container) {
   };
 
   const cloudCanvas = container.querySelector("#navCloudCanvas");
-  const cloudViewer = createMapCloudViewer({ canvas: cloudCanvas, hud: container.querySelector("#mapCloudNote") });
+  const cloudViewer = createMapCloudViewer({ canvas: cloudCanvas, hud: container.querySelector("#navCloudHud") });
   let mapView = "occupancy2d";
   let cloudReady = false;
 
@@ -213,6 +216,7 @@ export function initNavigationTab(container) {
   }
 
   function setMapView(next) {
+    mapInteractions.reset();
     mapView = next === "cloud3d" ? "cloud3d" : "occupancy2d";
     container.querySelectorAll("[data-map-view]").forEach(btn => {
       btn.setAttribute("aria-selected", btn.dataset.mapView === mapView ? "true" : "false");
@@ -220,6 +224,14 @@ export function initNavigationTab(container) {
     const threeD = mapView === "cloud3d";
     canvas.hidden = threeD;
     cloudCanvas.hidden = !threeD;
+    container.querySelector("#navCloudHud").hidden = !threeD;
+    container.querySelector("#navCoordsOverlay").hidden = threeD;
+    container.querySelector("#mapCloudNote").textContent = threeD
+      ? MOCK_CLOUD_LABEL + " 旋转/缩放仅观察相机，不改变目标；目标选点仅在2D视图。"
+      : "2D 占用栅格 · 本地 mx_map 参考图，非实时采集。拖动仅设置本地目标；下发仍需显式操作与 Lease。";
+    container.querySelector("#navMapLegend").innerHTML = threeD
+      ? "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：Mock位姿 · 橙色：已有目标（只读）</div>"
+      : "<div>青色：Mock位姿 · 橙色：本地目标</div><div>蓝色虚线：Mock规划路径</div>";
     if (threeD) { maybeBuildCloud(); cloudViewer.resize(); cloudViewer.setActive(true); cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath }); }
     else cloudViewer.setActive(false);
   }
@@ -364,7 +376,7 @@ export function initNavigationTab(container) {
   }
 
   // Canvas Mouse Interactions: Click & Drag to set Goal Pose, Right-Click / Alt-Click to Pan
-  canvas.addEventListener("mousedown", (e) => {
+  function onMapMouseDown(e) {
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.x;
     const cy = e.clientY - rect.y;
@@ -387,11 +399,9 @@ export function initNavigationTab(container) {
       container.querySelector("#navGoalInputYaw").value = 0;
       drawMap();
     }
-  });
+  }
 
-  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-
-  window.addEventListener("mousemove", (e) => {
+  function onMapMouseMove(e) {
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.x;
@@ -427,14 +437,15 @@ export function initNavigationTab(container) {
         drawMap();
       }
     }
-  });
+  }
 
-  window.addEventListener("mouseup", () => {
+  function onMapMouseUp() {
     isPanning = false;
     isDraggingGoal = false;
-  });
+    dragStartPos = null;
+  }
 
-  canvas.addEventListener("wheel", (e) => {
+  function onMapWheel(e) {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.x;
@@ -446,6 +457,12 @@ export function initNavigationTab(container) {
     offsetY = cy - (cy - offsetY) * (newScale / scale);
     scale = newScale;
     drawMap();
+  }
+
+  const mapInteractions = bindMapInteractions({
+    canvas, cloudCanvas, windowTarget:window,
+    isEnabled:() => mapSupported && mapView === "occupancy2d" && !canvas.hidden,
+    onDown:onMapMouseDown, onMove:onMapMouseMove, onUp:onMapMouseUp, onWheel:onMapWheel,
   });
 
   // Goal Inputs & Actions
@@ -551,6 +568,8 @@ export function initNavigationTab(container) {
       const obs = state.observation || {};
       const auth = state.authority || {};
       const navCap = !!(desc.capabilities && desc.capabilities.navigation);
+      mapSupported = navCap;
+      if (!navCap) { mapInteractions.reset(); cloudViewer.setActive(false); }
 
       const notSupportedEl = container.querySelector("#navNotSupportedCard");
       const mainWrapper = container.querySelector("#navMainWrapper");
@@ -613,6 +632,6 @@ export function initNavigationTab(container) {
       drawMap();
       if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
     },
-    destroy() { cloudViewer.destroy(); },
+    destroy() { mapInteractions.destroy(); cloudViewer.destroy(); },
   };
 }

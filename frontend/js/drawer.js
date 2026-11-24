@@ -119,11 +119,16 @@ class ExecutionDrawer {
     const cancelBtn = this.panel.querySelector("#drawerCancelBtn");
     cancelBtn.addEventListener("click", async () => {
       if (!this.currentJobId) return;
+      cancelBtn.disabled = true;
+      const jobId = this.currentJobId;
       try {
-        await api.cancelJob(this.currentJobId);
-        this._fetchJob();
+        await api.cancelJob(jobId);
+        if (this.currentJobId === jobId) await this._fetchJob();
       } catch (err) {
         alert("Cancel failed: " + err.message);
+        if (this.currentJobId === jobId) await this._fetchJob();
+      } finally {
+        cancelBtn.disabled = false;
       }
     });
 

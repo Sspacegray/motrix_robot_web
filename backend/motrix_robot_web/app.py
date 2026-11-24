@@ -501,7 +501,7 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
         return {"job": job.model_dump()}
 
     @app.post("/api/jobs/{job_id}/cancel")
-    def cancel_job(job_id: str) -> dict[str, Any]:
+    async def cancel_job(job_id: str) -> dict[str, Any]:
         existing = ctx.store.get_job(job_id)
         if existing and existing.state == "Running" and existing.lease_id:
             ctx.stop_robot(existing.robot_id, "job_cancel")

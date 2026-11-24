@@ -21,6 +21,7 @@ class WorkflowRunner:
         self.store = store
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._cancel_flags: set[str] = set()
+        self._cancel_events: dict[str, asyncio.Event] = {}
 
     def _ts(self) -> str:
         return utc_iso().replace("T", " ").replace("Z", "")
@@ -65,22 +66,62 @@ class WorkflowRunner:
         )
         self.store.save_job(job)
 
+        self._cancel_events[job_id] = asyncio.Event()
         task = asyncio.create_task(self._execute(job, workflow, connector, gate, dry_run))
         self._tasks[job_id] = task
         return job
 
+    def _mark_canceled(self, job: ExecutionJob, reason: str) -> None:
+        if job.state == "Canceled":
+            return
+        for step in job.steps:
+            if step.phase in ("pending", "running"):
+                step.phase = "canceled"
+                step.finished_at = utc_iso()
+        job.state = "Canceled"
+        job.exit_code = 130
+        job.finished_at = utc_iso()
+        job.logs.append(f"{self._ts()} [workflow] Canceled ({reason})")
+        self.store.save_job(job)
+
     def cancel_job(self, job_id: str) -> ExecutionJob | None:
-        self._cancel_flags.add(job_id)
+        # Called on the runner's event loop by the async API route: the Running
+        # check, terminal transition, and success commit cannot interleave.
         job = self.store.get_job(job_id)
-        if job and job.state == "Running":
-            job.logs.append(f"{self._ts()} [workflow] Cancel requested by operator")
-            self.store.save_job(job)
+        if not job or job.state == "Canceled":
+            return job
+        if job.state != "Running":
+            raise SafetyError(409, "job_already_finished", f"任务已结束（{job.state}），未接受取消；请刷新任务状态。")
+        self._cancel_flags.add(job_id)
+        event = self._cancel_events.get(job_id)
+        if event:
+            event.set()
+        job.logs.append(f"{self._ts()} [workflow] Cancel requested by operator")
+        # Persist before replying; the worker must never overwrite this record.
+        self._mark_canceled(job, "canceled_by_operator")
         return job
+
+    def _check_canceled(self, job: ExecutionJob) -> None:
+        if job.job_id in self._cancel_flags or job.state == "Canceled":
+            raise asyncio.CancelledError("canceled_by_operator_or_safety")
+
+    async def _wait_or_cancel(self, job: ExecutionJob, seconds: float) -> None:
+        self._check_canceled(job)
+        try:
+            await asyncio.wait_for(self._cancel_events[job.job_id].wait(), timeout=seconds)
+        except asyncio.TimeoutError:
+            pass
+        self._check_canceled(job)
 
     def abort_robot_jobs(self, robot_id: str, reason: str) -> None:
         for job in list(self.store.jobs.values()):
             if job.robot_id == robot_id and job.state == "Running":
                 self._cancel_flags.add(job.job_id)
+                event = self._cancel_events.get(job.job_id)
+                task = self._tasks.get(job.job_id)
+                if event and task and not task.get_loop().is_closed():
+                    # Safety endpoints may call this from FastAPI's thread pool.
+                    task.get_loop().call_soon_threadsafe(event.set)
                 job.logs.append(f"{self._ts()} [safety] Aborted running job: {reason}")
                 self.store.save_job(job)
 
@@ -93,6 +134,7 @@ class WorkflowRunner:
         dry_run: bool,
     ) -> None:
         try:
+            self._check_canceled(job)
             job.steps[0].phase = "succeeded"
             job.steps[0].finished_at = utc_iso()
             job.logs.append(
@@ -119,7 +161,7 @@ class WorkflowRunner:
                 self.store.save_job(job)
 
                 if wf_step.delay_s > 0:
-                    await asyncio.sleep(min(wf_step.delay_s, 0.5))
+                    await self._wait_or_cancel(job, min(wf_step.delay_s, 0.5))
 
                 if job.job_id in self._cancel_flags:
                     raise asyncio.CancelledError("canceled_before_dispatch")
@@ -138,12 +180,14 @@ class WorkflowRunner:
                 for _ in range(chunks):
                     if job.job_id in self._cancel_flags or (not dry_run and gate.snapshot().estop_latched):
                         raise asyncio.CancelledError("aborted_during_step")
-                    await asyncio.sleep(0.1)
+                    await self._wait_or_cancel(job, 0.1)
 
+                self._check_canceled(job)
                 step_obj.phase = "succeeded"
                 step_obj.finished_at = utc_iso()
                 self.store.save_job(job)
 
+            self._check_canceled(job)
             end_step = job.steps[-1]
             end_step.phase = "succeeded"
             end_step.finished_at = utc_iso()
@@ -157,15 +201,7 @@ class WorkflowRunner:
         except asyncio.CancelledError as exc:
             if not dry_run:
                 connector.safe_stop("workflow_canceled")
-            for st in job.steps:
-                if st.phase in ("pending", "running"):
-                    st.phase = "canceled"
-                    st.finished_at = utc_iso()
-            job.state = "Canceled"
-            job.exit_code = 130
-            job.finished_at = utc_iso()
-            job.logs.append(f"{self._ts()} [workflow] Canceled ({exc})")
-            self.store.save_job(job)
+            self._mark_canceled(job, str(exc))
         except Exception as exc:
             if not dry_run:
                 connector.safe_stop("workflow_failed")
@@ -188,6 +224,7 @@ class WorkflowRunner:
             self.store.save_job(job)
         finally:
             self._cancel_flags.discard(job.job_id)
+            self._cancel_events.pop(job.job_id, None)
             self._tasks.pop(job.job_id, None)
 
     def _dispatch_action(
