@@ -78,3 +78,13 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 - 验证：新增 `tests/test_drawer_lifecycle.mjs`，运行实际抽屉 controller 的最小 DOM double，验证启动无请求/无 open、选中任务才展示、关闭恢复；另验证每功能只有唯一导航、无固定分栏。Node 合计 9 passed；这不是浏览器或截图验收。
 - 新增/修改文件：index.html 去重复导航、actions.js 标题、style.css 源码对应尺寸、drawer lifecycle 测试及本文。原因是减少层级并证实默认全宽。回退只需新建本增量 revert，保留之前安全修复。
 - 给父代理默认首页截图路径：打开/强刷 `http://127.0.0.1:8096/`，不点击任务、不点击 Mock dry-run，即为全宽默认主页面；若已有抽屉打开，按 Esc 或右上 × 或点击遮罩关闭。建议输出 `/workspace/loo1-tracking/loop-default-main-v3.png`，尚未生成，待父代理派浏览器验收。Mac 未同步。
+
+## Motphys 原品牌资产修正（用户 13:46 Asia/Shanghai 要求）
+
+- 真实 header 来源为 `frontend/src/components/images/kleinkram-logo.vue`（由真实 header-component 引用），不是手画三角。它使用 `/motphys-logo.svg`，20px 高、`filter: brightness(0)`，右侧 16px 间距放置 20px/600/18px 行高的 Loop 字样，小屏隐藏 Loop 字样。
+- 仅逐字节复制参考仓库 `frontend/public/motphys-logo.svg` → 本项目 `frontend/assets/motphys-logo.svg`，`motphys-icon.svg` → `frontend/assets/motphys-icon.svg`；前者 viewBox 398.2×64，保留比例，后者用作 favicon。未生成、近似描摹、修改 SVG 路径或整包复制参考。
+- 修改 index.html 和 style.css 替换旧三角/近似文字，按真实组件尺寸与滤镜显示；新增 `tests/test_brand_assets.mjs` 验证引用、比例样式与原始文件 SHA-256 固定值，并排除 SVG 主动脚本/外链。两资产的原字节完全保留。
+- 许可来源：参考仓库根 LICENSE 为 MIT，原版权与全文已保留在 `docs/licenses/LOOP-MIT.txt`；本次未发现资产单独许可声明。此记录仅说明源码包许可来源，不把 MIT 解释为额外商标权或对外背书；使用范围限用户明确要求的本项目品牌视觉。
+- 回退：为本资产修正提交创建新的 revert，恢复之前 UI 即可；不改后端、不影响安全边界。浏览器验收 URL 仍为 `http://127.0.0.1:8096/`，刷新查看左上 Motphys 原图及浏览器 favicon；Mac 仍未同步。
+
+品牌增量验证：11 项 Node 测试通过，git diff --check 通过，源码秘密/运行数据扫描无命中；loopback HTTP 返回的 logo 与原资产字节一致。未宣称完成浏览器截图验收。

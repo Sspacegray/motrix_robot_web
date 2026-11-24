@@ -1005,3 +1005,10 @@ body.execution-open {overflow:hidden;}
 @media (max-width:1280px) {.header-environment {display:none;} .primary-nav .tab-btn {padding-inline:10px;} }
 @media (max-width:1050px) {.brand-section {width:100%; gap:12px; flex-wrap:nowrap;} .primary-nav {overflow-x:auto; min-width:0; flex:1;} .primary-nav .tab-btn {flex-shrink:0;} }
 @media (max-width:600px) {.brand-section {flex-wrap:wrap;} .primary-nav {height:42px; flex-basis:100%;} .execution-title-row {padding:16px;} .execution-title-row h1 {font-size:20px; line-height:28px;} }
+
+/* Authentic Loop header brand: kleinkram-logo.vue uses the original Motphys
+   wordmark at 20px high, brightness(0), then 16px gap to its Loop label. */
+.brand-logo {gap:16px; letter-spacing:normal; flex-shrink:0;}
+.motphys-brand-asset {display:block; height:20px; width:auto; aspect-ratio:398.2 / 64; filter:brightness(0);}
+.brand-logo .loop-wordmark {margin:0 30px 0 0; font-size:20px; line-height:18px; font-weight:600; color:#000;}
+@media(max-width:1023px) {.brand-logo .loop-wordmark {display:none;} }
