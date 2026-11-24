@@ -209,7 +209,7 @@ def _w1_descriptor() -> RobotDescriptor:
         mode="mock",
         connector_type="mock",
         arms_scope=["left", "right"],
-        urdf_url=None,
+        urdf_url="/assets/urdf/dexforce_w1_v030/robot.urdf",
         network_note="真机位于 PC2 (10.3.130.154:8090) + L40 Motrix 查看器；按路线图以只读镜像和 UI 复用为主，不重建 W1 ROS 底座。",
         safety_note="温度 ≥75°C / 电机故障 / 反馈超时 >1s 自动阻断；Motrix 查看器与 3D 视图严格只读。",
         joints=joints,
@@ -219,7 +219,7 @@ def _w1_descriptor() -> RobotDescriptor:
         ],
         capabilities=RobotCapabilities(
             joints=True,
-            urdf_3d=False,
+            urdf_3d=True,
             motrix_mirror=True,
             ee_6d=False,
             atomic_actions=True,

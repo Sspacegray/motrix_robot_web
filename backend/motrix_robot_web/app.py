@@ -517,6 +517,13 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
         except WebSocketDisconnect:
             ctx.motrix_bridge.unregister(ws)
 
+    @app.middleware("http")
+    async def revalidate_frontend(request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith(("/js/", "/css/")):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     # ---- Static Frontend & Offline Vendor Mounts ----
     if (FRONTEND_DIR / "vendor").exists():
         app.mount("/vendor", StaticFiles(directory=str(FRONTEND_DIR / "vendor")), name="vendor")

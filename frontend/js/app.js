@@ -2,7 +2,7 @@
 import { api } from "./api.js";
 import { drawer } from "./drawer.js";
 import { initOverviewTab } from "./tabs/overview.js";
-import { initJointsTab } from "./tabs/joints.js";
+import { initJointsTab } from "./tabs/joints.js?v=LOO1-20261124-model-v1";
 import { initActionsTab } from "./tabs/actions.js";
 import { initNavigationTab } from "./tabs/navigation.js";
 import { initPerceptionTab } from "./tabs/perception.js";
@@ -31,7 +31,9 @@ class MotphysRobotApp {
 
     // 2. Setup tab navigation switching
     this._setupTabSwitching();
-    this.switchTab("actions");
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (requestedTab && this.tabs[requestedTab]) this.switchTab(requestedTab);
+    else this.switchTab("actions");
 
     // 3. Setup header controls (robot selector, auth pills, E-Stop)
     this._setupHeaderControls();
@@ -104,7 +106,8 @@ class MotphysRobotApp {
       });
 
       // Default select first or r1pro-mock
-      const defaultId = this.allRobots.find((r) => r.id === "r1pro-mock") ? "r1pro-mock" : this.allRobots[0]?.id;
+      const requestedRobot = new URLSearchParams(window.location.search).get("robot");
+      const defaultId = this.allRobots.some(r => r.id === requestedRobot) ? requestedRobot : (this.allRobots.find((r) => r.id === "r1pro-mock") ? "r1pro-mock" : this.allRobots[0]?.id);
       if (defaultId) {
         selector.value = defaultId;
         await api.setRobotId(defaultId, true);

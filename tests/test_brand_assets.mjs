@@ -7,8 +7,8 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 test('header and favicon use authentic copied Motphys SVG assets', async () => {
   const html=await readFile(new URL('../frontend/index.html',import.meta.url),'utf8');
   const css=await readFile(new URL('../frontend/css/style.css',import.meta.url),'utf8');
-  assert.match(html,/class="motphys-brand-asset" src="\/assets\/motphys-logo\.svg"/);
-  assert.match(html,/href="\/assets\/motphys-icon\.svg"/);
+  assert.match(html,/class="motphys-brand-asset" src="\/assets\/motphys-logo\.svg(?:\?[^" ]+)?"/);
+  assert.match(html,/href="\/assets\/motphys-icon\.svg(?:\?[^" ]+)?"/);
   const brand=html.split('class="brand-logo"')[1].split('</a>')[0];
   assert.doesNotMatch(brand,/<svg|<polygon/);
   assert.match(css,/\.motphys-brand-asset\s*\{[^}]*height:20px;[^}]*width:auto;[^}]*filter:brightness\(0\)/);

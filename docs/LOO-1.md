@@ -32,7 +32,7 @@ uv run python -m motrix_robot_web --host 127.0.0.1 --port 8097 --data-dir /works
 ## 明确未完成 / 禁用
 
 - 没有真实 Edge 鉴权、Token/Lease、传输、状态读取或远程停机送达；Demo role 和 Mock Lease 不是生产认证。真实适配器即使配置 `readonly_only: false` 也不会打开写控。
-- W1 URDF 网格未加载；`urdf_3d=false`，3D 仍是标注清楚的只读程序骨架。没有 Motrix WASM 仿真器，只保留只读消息桥。
+- 此处最初 W1 网格未加载的限制已由下文 14:03 模型增量取代：W1 接入本地 URDF/21 GLB；浏览器视觉验收仍待父代理。R1/Piper 真实模型仍缺失；没有 Motrix WASM 仿真器，只保留只读消息桥。
 - 未解析 MCAP/LeRobot、未加载真实策略模型、未实现真实 Episode 采集；生成评测不可作为硬件放行证据。
 - Piper 防第二 CAN 写者仅为本进程配置防线，不是进程外资源仲裁；本批根本不提供真实写通路。未来真实集成仍需 Edge 的认证/Lease/资源互斥与独立验收。
 - 首次源码导入为最小可运行选集：原项目源码、地图、当前运行所需 Three.js/OrbitControls、URDF 文本/加载器存档；没有上传完整 W1 mesh/STL/GLB 包、完整未使用 vendor loader 集、参考 ZIP 或其余参考仓。URDF 加载器未接到运行视图，其离线依赖与网格需后续补齐；不能声称完整资产包已交付。
@@ -88,3 +88,26 @@ Loop 使用 MIT，原声明在 `docs/licenses/LOOP-MIT.txt`；Three.js 原 MIT �
 - 回退：为本资产修正提交创建新的 revert，恢复之前 UI 即可；不改后端、不影响安全边界。浏览器验收 URL 仍为 `http://127.0.0.1:8096/`，刷新查看左上 Motphys 原图及浏览器 favicon；Mac 仍未同步。
 
 品牌增量验证：11 项 Node 测试通过，git diff --check 通过，源码秘密/运行数据扫描无命中；loopback HTTP 返回的 logo 与原资产字节一致。未宣称完成浏览器截图验收。
+
+## 14:03 Asia/Shanghai 两项缺陷：真实模型与本地三角品牌
+
+### 诊断证据（不是先归因缓存）
+- 8096 和 8097 的进程 cwd 均为 box `/workspace/motrix_robot_web`；StaticFiles 明确挂载该项目 frontend。两端根页面最初均返回当前 Motphys SVG，而不是旧三角；当时 HTTP 有 Last-Modified/ETag，无显式 Cache-Control。
+- 对 Mac 授权项目只读检查发现 `frontend/index.html` 第19行仍为三角 data favicon，第27–30行仍为手画三角和旧 Motphys 文字。因此 Mac 页面三角有明确旧源码证据，不能把它称为浏览器缓存或宣称 box 更新已部署 Mac。未修改 Mac 文件。
+- box 全品牌位置用原 Motphys header SVG/favicon；增加可见 build ID `LOO1-20261124-model-v1`，入口 JS/CSS/品牌 URL 带相同版本。服务新增 HTML/JS/CSS `no-cache, must-revalidate`（Python 服务重启后生效）。没有增加假兜底三角。
+
+### 最小真实模型资产与实现
+- 原项目 Mac `frontend/assets/urdf/dexforce_w1_v030/robot.urdf` 已有21个 visual GLB引用；box 此前只带URDF文本，运行代码根本没有实例化URDFLoader，只画程序骨架。现只读逐文件安全复制该URDF实际引用的21个GLB（约26MiB），未复制collision、手部STL库或整包参考。源均来自用户授权现有项目，不访问旧参考库、不读.env。
+- GLB原始解析证明：21个几何场景，含原有PBR材质，其中10个GLB各内嵌1张纹理，共10张，无外部buffer/image URL、无必需压缩扩展。其余11个是几何/纯色材质，未给它们绘制假贴图。源模型不含额外BrainCo手部装配；`robot_with_ee.urdf`/手部库本批不导入。
+- 新增 `model-registry.js` 严格同时核对 `dex-w1-mock` 与 `dexforce_w1`；W1绝不映射到Piper/R1。R1和Piper缺各自模型，不再显示程序骨架冒充，明确空态提示。当前授权项目清单只找到W1模型；需要用户之后提供R1Pro、Piper各自URDF及引用mesh/材质纹理，才可补齐。
+- `robot-model-viewer.js` 使用现有URDFLoader，补齐项目已有Three r160的GLTF/STL/Collada/TGA loader和BufferGeometryUtils（5个JS，MIT同原Three LICENSE），按URDF层级/origin/axis/scale装配，Z-up转Y-up、相机自动包围取景、窗口/标签切换ResizeObserver；只把当前Mock joint_positions映射同名urdf_joint。保留GLTF scene Group/PBR材质贴图，不用统一颜色覆盖。等全部21视觉与纹理解码后统计；少于10张实际已解码图像会标partial，失败不假报成功。
+- 新模型模块不导入api/命令通道，不写CAN/ROS，资源限制同源模型目录；切机丢弃旧异步结果并释放资源。默认仍无Lease。真实Edge和Motrix WASM未实现状态不变。
+- 资产清单及每文件字节数/SHA256/材质/纹理数在 `visual-manifest.json`。资产属于用户现有项目，原URDF DexForce署名保留；未找到单独模型许可，不把模型改标MIT，也不宣称拥有对外再分发权。仅授权私有项目使用；Three和Loop原许可不变。
+
+### 验证和交接
+- `tests/test_model_assets.py` 校验21引用全覆盖、文件hash/GLB结构、内嵌纹理10、无外部资源、20关节映射、W1独有能力，以及所有模型/loader实际HTTP路径。`test_model_registry.mjs` 覆盖跨机型拒绝和只读加载接线。品牌回归允许显式版本URL且保留原SVG hash。
+- 最新验证：64 Python passed、1条原上游弃用warning；13 Node passed；ESM语法、diff检查通过。用Node vm链接并执行10个实际离线ESM依赖模块通过（实验性vm warning；不是浏览器）。这些不能替代WebGL视觉加载验收，尚未声称浏览器确已显示模型和10张贴图。
+- 父代理入口：`http://127.0.0.1:8096/?tab=joints&robot=dex-w1-mock`（URL会选择实际注册机型且不申请Lease）。检查页面build ID、HUD `21/21 GLB`、贴图解码统计、W1外观、Orbit旋转缩放；切Piper/R1应明确模型缺失而不是仍显示W1。建议截图 `/workspace/loo1-tracking/w1-real-model-v1.png`（尚未生成）。
+- 修改文件用途：app.py缓存验证头；mock.py如实声明W1静态模型；index/app/build CSS可见版本和直接验收入口；joints/model modules真实只读渲染并删除假骨架；5个vendor依赖、21资产与manifest构成最小离线依赖；测试与本文记录验证/来源。回退新建本批revert，不强推；保留之前后端安全修复。Mac没有写入、部署或同步。
+
+预览状态补充：已仅重启 box 的8096 Mock服务使新模型能力与 no-cache 验证头生效，loopback实测正确；8097未重启，虽静态文件同根，Python描述符仍可能旧，统一用8096验收。不涉及Mac服务。

@@ -2,6 +2,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { api } from "../api.js";
+import { createRobotModelViewer } from "../robot-model-viewer.js";
 
 export function initJointsTab(container) {
   container.innerHTML = `
@@ -11,7 +12,7 @@ export function initJointsTab(container) {
         <div class="viewport-3d-box" id="viewportBox">
           <canvas class="viewport-3d-canvas" id="viewportCanvas"></canvas>
           <div class="viewport-overlay-hud" id="viewportHud">
-            Mock 程序骨架 · 实线反馈 / 虚线目标 · 未加载 W1 URDF 网格
+            本地只读模型视图 · 等待机型选择（不加载硬件驱动）
           </div>
         </div>
 
@@ -115,64 +116,7 @@ export function initJointsTab(container) {
   const grid = new THREE.GridHelper(2.4, 24, 0x0d9488, 0x334155);
   scene.add(grid);
 
-  // Procedural Articulated Robot Node Graph
-  const robotGroup = new THREE.Group();
-  const ghostGroup = new THREE.Group();
-  scene.add(robotGroup);
-  scene.add(ghostGroup);
-
-  // Ghost material (purple translucent per dex_web)
-  const ghostMat = new THREE.MeshStandardMaterial({
-    color: 0xa855f7,
-    transparent: true,
-    opacity: 0.35,
-    roughness: 0.4,
-  });
-  const solidMat = new THREE.MeshStandardMaterial({
-    color: 0x0d9488,
-    roughness: 0.3,
-    metalness: 0.2,
-  });
-  const accentMat = new THREE.MeshStandardMaterial({
-    color: 0xf59e0b,
-    roughness: 0.4,
-  });
-
-  // Build basic articulated kinematic hierarchy for 3D visual preview
-  const jointMeshes = {};
-  const ghostMeshes = {};
-
-  function buildProceduralArm(parentGroup, isGhost, side, colorMat) {
-    const root = new THREE.Group();
-    root.position.set(side === "left" ? 0.2 : -0.2, 0.65, 0);
-    parentGroup.add(root);
-
-    // 6-7 links
-    let cur = root;
-    const links = [];
-    for (let i = 0; i < 6; i++) {
-      const g = new THREE.Group();
-      const geom = new THREE.CylinderGeometry(0.024, 0.028, 0.12, 12);
-      geom.rotateZ(Math.PI / 2);
-      const mesh = new THREE.Mesh(geom, i === 5 ? accentMat : colorMat);
-      mesh.position.set(side === "left" ? 0.06 : -0.06, 0, 0);
-      g.add(mesh);
-      cur.add(g);
-      cur = g;
-      links.push(g);
-    }
-    return links;
-  }
-
-  // Base torso / pedestal
-  const baseGeom = new THREE.CylinderGeometry(0.14, 0.18, 0.45, 24);
-  robotGroup.add(new THREE.Mesh(baseGeom, solidMat));
-  ghostGroup.add(new THREE.Mesh(baseGeom, ghostMat));
-
-  const leftArmLinks = buildProceduralArm(robotGroup, false, "left", solidMat);
-  const rightArmLinks = buildProceduralArm(robotGroup, false, "right", solidMat);
-  const ghostLeftLinks = buildProceduralArm(ghostGroup, true, "left", ghostMat);
-  const ghostRightLinks = buildProceduralArm(ghostGroup, true, "right", ghostMat);
+  const modelViewer = createRobotModelViewer({scene, camera, controls, hud:container.querySelector("#viewportHud")});
 
   // Resize handler for 3D canvas
   function onResize() {
@@ -187,6 +131,8 @@ export function initJointsTab(container) {
     }
   }
   window.addEventListener("resize", onResize);
+  const resizeObserver = new ResizeObserver(onResize);
+  resizeObserver.observe(container.querySelector("#viewportBox"));
   setTimeout(onResize, 100);
 
   // 3D Render Loop
@@ -404,6 +350,7 @@ export function initJointsTab(container) {
       // If descriptor changed, update curve select & slider list
       if (!currentDescriptor || currentDescriptor.id !== desc.id) {
         currentDescriptor = desc;
+        modelViewer.select(desc);
         localTargets = { ...(obs.joint_targets || obs.joint_positions || {}) };
         currentPositions = { ...(obs.joint_positions || {}) };
 
@@ -425,47 +372,7 @@ export function initJointsTab(container) {
       const jpos = obs.joint_positions || {};
       const jtgt = obs.joint_targets || localTargets || {};
 
-      // Animate solid robot links
-      if (desc.robot_type === "r1pro") {
-        for (let i = 0; i < leftArmLinks.length; i++) {
-          const val = jpos[`left_arm_${i + 1}`] || 0;
-          leftArmLinks[i].rotation.y = val * 0.4;
-          leftArmLinks[i].rotation.z = val * 0.3;
-        }
-        for (let i = 0; i < rightArmLinks.length; i++) {
-          const val = jpos[`right_arm_${i + 1}`] || 0;
-          rightArmLinks[i].rotation.y = val * 0.4;
-          rightArmLinks[i].rotation.z = val * 0.3;
-        }
-        // Ghost targets
-        for (let i = 0; i < ghostLeftLinks.length; i++) {
-          const val = jtgt[`left_arm_${i + 1}`] || 0;
-          ghostLeftLinks[i].rotation.y = val * 0.4;
-          ghostLeftLinks[i].rotation.z = val * 0.3;
-        }
-        for (let i = 0; i < ghostRightLinks.length; i++) {
-          const val = jtgt[`right_arm_${i + 1}`] || 0;
-          ghostRightLinks[i].rotation.y = val * 0.4;
-          ghostRightLinks[i].rotation.z = val * 0.3;
-        }
-      } else if (desc.robot_type === "piper_dual") {
-        for (let i = 0; i < leftArmLinks.length; i++) {
-          const val = jpos[`left_j${i + 1}`] || 0;
-          leftArmLinks[i].rotation.y = val * 0.4;
-        }
-        for (let i = 0; i < rightArmLinks.length; i++) {
-          const val = jpos[`right_j${i + 1}`] || 0;
-          rightArmLinks[i].rotation.y = val * 0.4;
-        }
-        for (let i = 0; i < ghostLeftLinks.length; i++) {
-          const val = jtgt[`left_j${i + 1}`] || 0;
-          ghostLeftLinks[i].rotation.y = val * 0.4;
-        }
-        for (let i = 0; i < ghostRightLinks.length; i++) {
-          const val = jtgt[`right_j${i + 1}`] || 0;
-          ghostRightLinks[i].rotation.y = val * 0.4;
-        }
-      }
+      modelViewer.updatePose(jpos);
 
       // Update Motrix Mirror info
       const motrixCountEl = container.querySelector("#motrixClientsCount");
@@ -504,6 +411,10 @@ export function initJointsTab(container) {
     destroy() {
       if (animId) cancelAnimationFrame(animId);
       window.removeEventListener("resize", onResize);
+      resizeObserver.disconnect();
+      modelViewer.destroy();
+      controls.dispose();
+      renderer.dispose();
     }
   };
 }

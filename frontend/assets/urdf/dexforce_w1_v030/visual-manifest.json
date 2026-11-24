@@ -1,0 +1,198 @@
+{
+  "robot_id": "dex-w1-mock",
+  "robot_type": "dexforce_w1",
+  "urdf": "robot.urdf",
+  "source": "User-provided existing project frontend/assets/urdf/dexforce_w1_v030 (read-only copy)",
+  "license": "No separate asset license supplied; retain original DexForce ownership; private project use only, not re-licensed MIT",
+  "files": [
+    {
+      "path": "visual/chassis/base_link.glb",
+      "bytes": 2432112,
+      "sha256": "222eb0fe076a2b2693b2bb168d718a2b1418f83fcf0af5eaccd7239f5f990cf0",
+      "meshes": 1,
+      "materials": 4,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/head/head_pitch_j2_link.glb",
+      "bytes": 4545772,
+      "sha256": "1419a0a9d1536342eb9fe09e0df71500bbf8c0fb144fb66e4f9188edb8493798",
+      "meshes": 1,
+      "materials": 5,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/head/head_yaw_j1_link.glb",
+      "bytes": 395504,
+      "sha256": "73b55b47b32754413d2c04c867b10727185d4f057d20d52f3b9a3cae414b313f",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/left_arm/elbow_pitch_l_j3_link.glb",
+      "bytes": 842944,
+      "sha256": "bdac39304072161e1860da7c4110dbe048e771cd784492a7c90c3ec9adf9589a",
+      "meshes": 1,
+      "materials": 10,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/left_arm/elbow_yaw_l_j4_link.glb",
+      "bytes": 388908,
+      "sha256": "86ea63225738979705b110e52f42bb133de21514fe78684ad7792a1f5d274cef",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/left_arm/shoulder_pitch_l_j1_link.glb",
+      "bytes": 386544,
+      "sha256": "2595e0f14275f173bd4822d21ad2e5484e862de7e3a254a8c008ce0704beeded",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/left_arm/shoulder_roll_l_j2_link.glb",
+      "bytes": 703136,
+      "sha256": "efc3d3a3875964c01e8bf84f1d66082be43969f3cbd4cadfae8aae0439662a4e",
+      "meshes": 1,
+      "materials": 2,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/left_arm/wrist_pitch_l_j5_link.glb",
+      "bytes": 337500,
+      "sha256": "62e8af2e68b25d18829a6c68270a0d6f49f94cade703937dfe5d353447b5ea9b",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/left_arm/wrist_roll_l_j7_link.glb",
+      "bytes": 1149368,
+      "sha256": "d85b347517a03ff1cffd83cfe6525b13bd95a616176e648f8e9263639207fde8",
+      "meshes": 1,
+      "materials": 3,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/left_arm/wrist_yaw_l_j6_link.glb",
+      "bytes": 906452,
+      "sha256": "cbc0d47fcb3eb98a18642cf2355d6ed13baf0b6628ad24ec76c35d292f3e7958",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/right_arm/elbow_pitch_r_j3_link.glb",
+      "bytes": 830068,
+      "sha256": "89fc682793b735eab2fe7f6a0a9d23cec3b15e967fd4aeb1a29b5a833a51ffad",
+      "meshes": 1,
+      "materials": 2,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/right_arm/elbow_yaw_r_j4_link.glb",
+      "bytes": 385452,
+      "sha256": "56def379461f4ff3c415d535360566475a115ef5f4918bf2344620927d4c0f6e",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/right_arm/shoulder_pitch_r_j1_link.glb",
+      "bytes": 386604,
+      "sha256": "fa44e4b1e81ad3f2d7a32b69007b0d9f0d61df2e688635440308e07f264332e8",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/right_arm/shoulder_roll_r_j2_link.glb",
+      "bytes": 678256,
+      "sha256": "c7bd1648a1dab7a0dc73545b937a6b6f3d2e7ebf47cb0150c8bd28079077605e",
+      "meshes": 1,
+      "materials": 2,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/right_arm/wrist_pitch_r_j5_link.glb",
+      "bytes": 337512,
+      "sha256": "65597b5b5bfb6a911bdab6b9b5b05863ed5cc9144ae2e52b42e262df349f50ae",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/right_arm/wrist_roll_r_j7_link.glb",
+      "bytes": 1155608,
+      "sha256": "c6c76cb753579dc4397a7585ef63a8862492816177fddd7f81761c80d42675ab",
+      "meshes": 1,
+      "materials": 2,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/right_arm/wrist_yaw_r_j6_link.glb",
+      "bytes": 888440,
+      "sha256": "1d3507a30de8f84f6ef4a609f730f3046caffb6de49d169901c9b896b8d5d50d",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/torso/ankle_pitch_link.glb",
+      "bytes": 143904,
+      "sha256": "92b2b48da5358c6e8e202db3ad12e5059d53ac2be8a1ff5dec6bf5dab7a69c66",
+      "meshes": 1,
+      "materials": 2,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/torso/buttock_pitch_link.glb",
+      "bytes": 325228,
+      "sha256": "fc9598cd67b9f57c0c34fbb2c6986a71f14cb3aa9cc136ed4caa98d5287a83ef",
+      "meshes": 1,
+      "materials": 1,
+      "textures": 1,
+      "embedded_images": 1
+    },
+    {
+      "path": "visual/torso/knee_pitch_link.glb",
+      "bytes": 112872,
+      "sha256": "37c96b47b3576c0e4bcd6026d79ae143dd408adcbc71978ebb2d5e9f46628d94",
+      "meshes": 1,
+      "materials": 2,
+      "textures": 0,
+      "embedded_images": 0
+    },
+    {
+      "path": "visual/torso/waist_yaw_link.glb",
+      "bytes": 9355940,
+      "sha256": "dfb98763f7e2ee821096534fb0b9933b337f2fca308c524e3eff7ba216bc1d13",
+      "meshes": 1,
+      "materials": 6,
+      "textures": 0,
+      "embedded_images": 0
+    }
+  ]
+}
