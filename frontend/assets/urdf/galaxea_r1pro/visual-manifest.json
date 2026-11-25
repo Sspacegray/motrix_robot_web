@@ -1,0 +1,198 @@
+{
+  "robot_id": "r1pro-mock",
+  "robot_type": "r1pro",
+  "source_urdf": "GalaxeaManipSim/galaxea_sim/assets/r1_pro/robot.urdf",
+  "source_meshes": "GalaxeaManipSim/galaxea_sim/assets/r1_pro/meshes (UV-mapped OBJ + output.jpg atlas)",
+  "visual_count": 36,
+  "embedded_images": 1,
+  "textures": [
+    "meshes_textured/output.jpg"
+  ],
+  "files": [
+    {
+      "path": "meshes_textured/base_link.obj",
+      "bytes": 16998061,
+      "sha256": "952edaabc3d16cee9f8ba723ad54501cf619bf9c6412ae00e84bafc662506a26"
+    },
+    {
+      "path": "meshes_textured/left_arm_base_link.obj",
+      "bytes": 71380,
+      "sha256": "37a26b6c131fc9aa0839094bdc40cbe7f02894b44bf60d0caa9e956d1a631e95"
+    },
+    {
+      "path": "meshes_textured/left_arm_link1.obj",
+      "bytes": 131513,
+      "sha256": "d74eb29d28a45a3909b2fe03e8303c564ce2f7da84965c9198d936a7e51c028f"
+    },
+    {
+      "path": "meshes_textured/left_arm_link2.obj",
+      "bytes": 997737,
+      "sha256": "52876f1bbf6aa3a066655e1f6de7679651582131c834281834d662fa3424cb6e"
+    },
+    {
+      "path": "meshes_textured/left_arm_link3.obj",
+      "bytes": 919333,
+      "sha256": "bb79bb5852036de2b68d8cb34f5be2e5b693ad14f396eda58deb53814bd14e2d"
+    },
+    {
+      "path": "meshes_textured/left_arm_link4.obj",
+      "bytes": 1124649,
+      "sha256": "37c88ea7d6a390d82737b8b51d743ded49091894a285f9438676b058f395a071"
+    },
+    {
+      "path": "meshes_textured/left_arm_link5.obj",
+      "bytes": 1733686,
+      "sha256": "58004b43b584ffe3558547dd46a7b185c825870e1897e9ff70c34eb3000130f2"
+    },
+    {
+      "path": "meshes_textured/left_arm_link6.obj",
+      "bytes": 579163,
+      "sha256": "f04e840eb74795d0ee0aef73607d2ffd42f5640ce98bcca147e530789b44798d"
+    },
+    {
+      "path": "meshes_textured/left_arm_link7.obj",
+      "bytes": 660065,
+      "sha256": "0a6d12f97fa0f219dfdeb30f5119caaa2d5c842b6d4d46a67239bac96b2566e7"
+    },
+    {
+      "path": "meshes_textured/left_gripper_finger_link1.obj",
+      "bytes": 478540,
+      "sha256": "fd374bc0d08ed62484233858c88606daf2f9df93dd0bf97b01189f19cfb96931"
+    },
+    {
+      "path": "meshes_textured/left_gripper_finger_link2.obj",
+      "bytes": 395922,
+      "sha256": "0810e76e5383d60ecd83ce230a28dacf4e7a368fcdfee74bd5d858ecc73262d1"
+    },
+    {
+      "path": "meshes_textured/left_gripper_link.obj",
+      "bytes": 241122,
+      "sha256": "5f3d6cd9e6108ccfe42f8f22944276ba531462f6fabd5888a38e3cffecf6f596"
+    },
+    {
+      "path": "meshes_textured/left_realsense_link.obj",
+      "bytes": 1228582,
+      "sha256": "8617cd535edbb55aeb706beb6de33996c5056670423600fc3bc3afae51081eeb"
+    },
+    {
+      "path": "meshes_textured/output.jpg",
+      "bytes": 30344,
+      "sha256": "78c362d79cdf478a48a13a9f48cb4be4bf6a74bc9f627d222ec7f9e5adb86d84"
+    },
+    {
+      "path": "meshes_textured/right_arm_base_link.obj",
+      "bytes": 95882,
+      "sha256": "ae844e9a0cde62c312cbbb48e04b72f788dd464030e92cf535c0810d022e9db8"
+    },
+    {
+      "path": "meshes_textured/right_arm_link1.obj",
+      "bytes": 128486,
+      "sha256": "2238073490cc21a4185f6a517c97f41c4bc9a6b3e306e52fcb427ebc45ff2857"
+    },
+    {
+      "path": "meshes_textured/right_arm_link2.obj",
+      "bytes": 1007875,
+      "sha256": "b18e358563f2ddcbbba0e71f938d250d2f8cb55aad350322cd3adb70490dd334"
+    },
+    {
+      "path": "meshes_textured/right_arm_link3.obj",
+      "bytes": 920535,
+      "sha256": "2b639267dc9653801a379a158d78edeb3b880c99e17cf1cefbed71003ffeba09"
+    },
+    {
+      "path": "meshes_textured/right_arm_link4.obj",
+      "bytes": 1138546,
+      "sha256": "3e6fa7f2ffde117df1e7e8a16837d86ef9a9af180cea2b57dc0702afb0f5f3ba"
+    },
+    {
+      "path": "meshes_textured/right_arm_link5.obj",
+      "bytes": 1739548,
+      "sha256": "e33c60c7d24f4d5bd18e6f11b113f3e9b3dea6f204261f6680b1579ce496acc0"
+    },
+    {
+      "path": "meshes_textured/right_arm_link6.obj",
+      "bytes": 565888,
+      "sha256": "bed99c9c4ec7347617e11bb2e78af606298c01fd16a3fd1d756560e9d6358a10"
+    },
+    {
+      "path": "meshes_textured/right_arm_link7.obj",
+      "bytes": 578631,
+      "sha256": "3a88d2bd16e41ceb1694080988cf4c66552256d89edc3d476fbcb8682e567e9c"
+    },
+    {
+      "path": "meshes_textured/right_gripper_finger_link1.obj",
+      "bytes": 385671,
+      "sha256": "176accc44e8d5af78e9fa8970261496447b327756f159765d872640c2e36cde3"
+    },
+    {
+      "path": "meshes_textured/right_gripper_finger_link2.obj",
+      "bytes": 479863,
+      "sha256": "ef6fda4c694c3863fa84240881997a49a4990e4e128a55505443593913bc6186"
+    },
+    {
+      "path": "meshes_textured/right_gripper_link.obj",
+      "bytes": 225249,
+      "sha256": "39dcdbd1878badad82f28ad9942af4f631749d891a6d07dc7fb933163f8cbfd9"
+    },
+    {
+      "path": "meshes_textured/right_realsense_link.obj",
+      "bytes": 1229604,
+      "sha256": "d3c3a219b46776d98eb661c16e39cd892cc36bb722c616adc40640cccf225353"
+    },
+    {
+      "path": "meshes_textured/steer_motor_link1.obj",
+      "bytes": 1538799,
+      "sha256": "94660fe46b37184e276b5ea69a7ace92b478bcade56cd2cd9323145329ce67d2"
+    },
+    {
+      "path": "meshes_textured/steer_motor_link2.obj",
+      "bytes": 1333566,
+      "sha256": "a57cd653ea205ef0ab95f6cee078a96eaaef5547b5a68166c4b51f98b2813fae"
+    },
+    {
+      "path": "meshes_textured/steer_motor_link3.obj",
+      "bytes": 1318221,
+      "sha256": "8b362bd4b3a4c57a04d881e46d94138c494ae60712d6b75854e3aa63fa1a4c7c"
+    },
+    {
+      "path": "meshes_textured/torso_link1.obj",
+      "bytes": 2606650,
+      "sha256": "60352bbef5346ead8294f8f9215bf10c10d03da6cd3544a36515a1c11ec0bd40"
+    },
+    {
+      "path": "meshes_textured/torso_link2.obj",
+      "bytes": 1083483,
+      "sha256": "399a1a4ecdb6ea1b254970dee8af0f689aa7a15da4944ef608562731530010ca"
+    },
+    {
+      "path": "meshes_textured/torso_link3.obj",
+      "bytes": 908116,
+      "sha256": "422e2f51ee6b214d2304ba37c394ed174741bc0f5b9e980e6343c1e31ed81e71"
+    },
+    {
+      "path": "meshes_textured/torso_link4.obj",
+      "bytes": 6314789,
+      "sha256": "156aa7de599834ac55b3b0560104f4858111065d77d14700e62995f36c891f0b"
+    },
+    {
+      "path": "meshes_textured/wheel_motor_link1.obj",
+      "bytes": 13454,
+      "sha256": "313336f9a4bcc23849492e93d96ad2565201f813beb430d38efff1ae43a43eb1"
+    },
+    {
+      "path": "meshes_textured/wheel_motor_link2.obj",
+      "bytes": 12938,
+      "sha256": "cece54c698f60cb4c9a40ab58e6ec7c37617b6f562d98eec1250a54982b96680"
+    },
+    {
+      "path": "meshes_textured/wheel_motor_link3.obj",
+      "bytes": 14181,
+      "sha256": "5245e4a6a4f297502d570cea73a930104c1583c0ae807531d53d119ac99b4cc9"
+    },
+    {
+      "path": "meshes_textured/zed_link.obj",
+      "bytes": 606374,
+      "sha256": "3dedcaba3bfbecf76d5a4a40dc64e4acd513db5e2fc41492df94137a37ee7116"
+    }
+  ]
+}

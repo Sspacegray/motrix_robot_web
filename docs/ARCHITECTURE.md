@@ -71,7 +71,7 @@ flowchart TB
 
 ## 3. Canonical Data Model（对齐 Edge Observation / Action Layout）
 
-为避免另造第四套协议，所有前端视图和工作流引擎均只消费一套标准高层模型（定义于 [schemas.py](file:///Users/wubinxin/work/DEPLOY/motrix_robot_web/backend/motrix_robot_web/schemas.py)）：
+为避免另造第四套协议，所有前端视图和工作流引擎均只消费一套标准高层模型（定义于 [schemas.py](../backend/motrix_robot_web/schemas.py)）：
 
 1. **`RobotDescriptor`**：机器人元信息、`mode (mock|sim|real)`、`connector_type (mock|edge|r1pro|piper_lelab|dex_w1)`、`arms_scope`、`joint_layout`（名称、分组、上下限、单位、是否为夹爪）、`camera_streams`、`capabilities` 布尔矩阵、`network_note`（如 R1 `192.168.3.x` NAT 提示）。
 2. **`ObservationSnapshot`**（对应 Edge `Observation Layout`）：`timestamp`、`feedback_age_ms`、`measured_hz`、`joint_positions`、`joint_velocities`、`joint_efforts`、`ee_poses`（`base_link` 6D）、`motors`（温度/错误码/使能/状态字）、`interlocks`、`battery`、`navigation_state`、`perception_state`、`policy_state`。
@@ -88,7 +88,7 @@ flowchart TB
 
 ## 4. Connector 契约与过渡演进策略
 
-每个 Connector 实现统一抽象基类 [connectors/base.py](file:///Users/wubinxin/work/DEPLOY/motrix_robot_web/backend/motrix_robot_web/connectors/base.py)：
+每个 Connector 实现统一抽象基类 [connectors/base.py](../backend/motrix_robot_web/connectors/base.py)：
 - **只读观测**：`get_descriptor()`、`get_observation()`、`get_camera_frame(stream_key)`
 - **受控租约**：`acquire_lease(operator, token)`、`release_lease()`、`heartbeat()`
 - **受控动作（均须经 SafetyGate + Active Lease）**：`send_joint_targets(...)`、`send_ee_step(...)`、`send_chassis_velocity(...)`、`set_navigation_mode(...)`、`send_navigation_goal(...)`、`control_perception(...)`、`control_policy(...)`
@@ -96,6 +96,23 @@ flowchart TB
 
 ### 演进门禁（对齐 PDF P0–P3）
 - **P0（已完成于本仓基线）**：锁定边界、三合一架构文档、Canonical Schema、双层权限与安全单测。
-- **P1（只读反馈）**：零写控对接 `EdgeConnector` / `DexW1Connector` / `R1ProConnector` / `PiperLeLabConnector`，在统一网页里只读查看三台机器的关节、3D、相机、健康状态与离线回放。
+- **P1（只读反馈）**：零写控对接 `EdgeConnector` / `Ros2BridgeConnector` / `DexW1Connector` / `R1ProConnector` / `PiperLeLabConnector`，在统一网页里只读查看多机型关节、3D、相机、健康状态与离线回放。
 - **P2（授权对接）**：待 Edge M2–M4 与安全门禁（全关节限位/NaN/3s 心跳/免租约急停/状态联锁）验收通过后，开启受控写路径；Piper 切至 Edge 唯一 CAN 写者并退役 LeLab 直写 CAN 环。
 - **P3（Loop 关联）**：接通飞书登录 / Loop 对象链 API，取代本版 JSON 人工台账。
+
+---
+
+## 5. v1.2 已落地的核心增强能力（与当前代码库同步）
+
+1. **三机型真实 URDF/贴图 + 6D FK/IK 与全息轨迹预演**：
+   - R1 Pro（Galaxea 官方 UV 贴图 OBJ + `output.jpg`）、Piper Dual（77 视觉 STL/OBJ + D405 贴图）、Dexforce W1（21 GLB + 10 内嵌贴图 + BrainCo Revo1 双灵巧手）全部离线本地渲染。
+   - 纯 Python 解析雅可比 6D DLS IK 与五次多项式规划器（[kinematics.py](../backend/motrix_robot_web/kinematics.py)），支持关节方向反转 `sign`、零点偏置 `zero_offset` 与 `urdf_scale`；前端只点亮运动支链的全息轮廓幽灵 + 防遮挡 X-Ray 霓虹轨迹带 + 方向箭头 + 地面深度投影 + `🎯 聚焦轨迹` + `0.5×/1×/2×` 慢放。
+   - 工作流引擎（[workflow_engine.py](../backend/motrix_robot_web/workflow_engine.py)）支持 `action_produces / action_requires` 上下游参数传递（`workflow_xyz / workflow_pose / aruco_pose`）、多步分色 3D 轨迹预演与步骤交接路标、统一预演与 Live 下发、在线 IK 残差复核、真实闭环到位判定与超时熔断，以及 `Paused` 暂停 / 继续 / 单步断点调试。
+2. **高精度真实 2D/3D 导航地图**：
+   - R1 Pro 默认加载 Fast-SLAM Plus 高精 2D 栅格图（`bag_20260914_map.png`, `0.05m/pix`）与对齐的 98.1 万点 3D 静态点云（`virtual_machine_map.pcd`），并支持切换 `mx_map` 与 `r1pro_20260918` 对照图，诚实标注 `live: false`。
+3. **全数据驱动「+ 导入机器人」标准资产包向导**：
+   - [robot_importer.py](../backend/motrix_robot_web/robot_importer.py) 支持上传 `.zip`（无 `robot_manifest.json` 时自动从 URDF 推断关节、限位与运动学链），内置 Zip-Slip/符号链接/后缀白名单拦截、6 项入库预检门禁、`/custom-robots` 仅挂载已发布的 `packages/`（隔离 `registry.json` 与自动清理的 `_staging/`）以及重启持久化。
+4. **零 `rclpy` 依赖的 `Ros2BridgeConnector`**：
+   - [ros2_bridge.py](../backend/motrix_robot_web/connectors/ros2_bridge.py) 通过标准 `rosbridge_server` WebSocket 协议跨网段订阅 `/joint_states`、`/odom`、`/battery_state`（容错 JSON `null/NaN`，新鲜度阈值与 SafetyGate 统一为 `1000ms`，默认强制 `readonly_only=True`），并在 `POST /api/robots/ros2/probe` 内置 SSRF 防护（仅允许本机/RFC1918 私网/`*.local` 或显式白名单）。
+5. **Motphys Loop 高清实时示波器**：
+   - 20s 实时关节曲线重构为 Retina HiDPI 浅色工程示波器，支持跟踪误差带、软限位警戒线、悬停十字准线浮层、暂停/清空与右侧五次多项式 `S-Curve` 预演叠加。

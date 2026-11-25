@@ -1,0 +1,40 @@
+{
+  "id": "r1pro_20260918",
+  "name": "R1 Pro \u771f\u5b9e SLAM 3D/2D \u5730\u56fe (2026-09-18)",
+  "source_dir": "SLAM/robust_slam/maps_built/r1pro_20260918",
+  "image_url": "/assets/maps/r1pro_20260918/r1pro_map.png",
+  "yaml_url": "/assets/maps/r1pro_20260918/r1pro_map.yaml",
+  "pcd_url": "/assets/maps/r1pro_20260918/r1pro_map.pcd",
+  "width": 274,
+  "height": 317,
+  "resolution": 0.15,
+  "origin": [
+    -28.05,
+    -21.75,
+    0.0
+  ],
+  "point_count": 215046,
+  "area_m2": 1404.0,
+  "bbox": [
+    -27.672,
+    19.467,
+    -23.075,
+    26.335,
+    -1.498,
+    3.983
+  ],
+  "files": {
+    "r1pro_map.pcd": {
+      "bytes": 3440926,
+      "sha256": "902a88be8c1338574de1916d62eaa1befa9d0e4033e2287701b9bb3ad2af8d1b"
+    },
+    "r1pro_map.png": {
+      "bytes": 4358,
+      "sha256": "43c19c528cb8cd3bce0e58f1bf71141360c6e0f7b5153e11f7f9af4a5cdc6f24"
+    },
+    "r1pro_map.yaml": {
+      "bytes": 141,
+      "sha256": "a32ab2c4f0fe11b3ce0e87a24817136c50290c9025ebad95eeca2ae2d3282bdb"
+    }
+  }
+}

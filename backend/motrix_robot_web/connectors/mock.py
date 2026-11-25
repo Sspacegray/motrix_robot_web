@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import html
 import math
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from ..safety import SafetyError, utc_iso
@@ -26,10 +28,10 @@ from .base import RobotConnector
 
 def _r1pro_descriptor() -> RobotDescriptor:
     joints: list[JointSpec] = [
-        JointSpec(name="torso_1", label="Torso 1 (Lower Pitch)", group="torso", lower=-1.13, upper=1.83, default=0.0),
-        JointSpec(name="torso_2", label="Torso 2 (Mid Pitch)", group="torso", lower=-2.79, upper=2.53, default=0.0),
-        JointSpec(name="torso_3", label="Torso 3 (Upper Pitch)", group="torso", lower=-1.83, upper=1.57, default=0.0),
-        JointSpec(name="torso_4", label="Torso 4 (Yaw)", group="torso", lower=-3.05, upper=3.05, default=0.0),
+        JointSpec(name="torso_1", label="Torso 1 (Lower Pitch)", group="torso", lower=-1.13, upper=1.83, default=0.0, urdf_joint="torso_joint1"),
+        JointSpec(name="torso_2", label="Torso 2 (Mid Pitch)", group="torso", lower=-2.79, upper=2.53, default=0.0, urdf_joint="torso_joint2"),
+        JointSpec(name="torso_3", label="Torso 3 (Upper Pitch)", group="torso", lower=-1.83, upper=1.57, default=0.0, urdf_joint="torso_joint3"),
+        JointSpec(name="torso_4", label="Torso 4 (Yaw)", group="torso", lower=-3.05, upper=3.05, default=0.0, urdf_joint="torso_joint4"),
     ]
     arm_defaults_l = [0.22, 0.35, 0.0, -0.85, 0.0, 0.30, 0.0]
     arm_defaults_r = [-0.22, -0.35, 0.0, -0.85, 0.0, 0.30, 0.0]
@@ -42,9 +44,23 @@ def _r1pro_descriptor() -> RobotDescriptor:
                 lower=-2.95,
                 upper=2.95,
                 default=arm_defaults_l[i - 1],
+                urdf_joint=f"left_arm_joint{i}",
             )
         )
-    joints.append(JointSpec(name="left_gripper", label="Left Gripper", group="gripper", unit="norm", lower=0.0, upper=1.0, default=0.75, is_gripper=True))
+    joints.append(
+        JointSpec(
+            name="left_gripper",
+            label="Left Gripper",
+            group="gripper",
+            unit="norm",
+            lower=0.0,
+            upper=1.0,
+            default=0.75,
+            is_gripper=True,
+            urdf_joint="left_gripper_finger_joint1",
+            urdf_scale=0.05,
+        )
+    )
     for i in range(1, 8):
         joints.append(
             JointSpec(
@@ -54,9 +70,23 @@ def _r1pro_descriptor() -> RobotDescriptor:
                 lower=-2.95,
                 upper=2.95,
                 default=arm_defaults_r[i - 1],
+                urdf_joint=f"right_arm_joint{i}",
             )
         )
-    joints.append(JointSpec(name="right_gripper", label="Right Gripper", group="gripper", unit="norm", lower=0.0, upper=1.0, default=0.75, is_gripper=True))
+    joints.append(
+        JointSpec(
+            name="right_gripper",
+            label="Right Gripper",
+            group="gripper",
+            unit="norm",
+            lower=0.0,
+            upper=1.0,
+            default=0.75,
+            is_gripper=True,
+            urdf_joint="right_gripper_finger_joint1",
+            urdf_scale=0.05,
+        )
+    )
 
     return RobotDescriptor(
         id="r1pro-mock",
@@ -65,8 +95,9 @@ def _r1pro_descriptor() -> RobotDescriptor:
         mode="mock",
         connector_type="mock",
         arms_scope=["left", "right"],
-        map_image_url="/assets/mx_map.png",
-        map_yaml={"resolution": 0.05, "origin": [-9.19, -7.85, 0.0], "width": 320, "height": 320},
+        urdf_url="/assets/urdf/galaxea_r1pro/robot.urdf",
+        map_image_url="/assets/maps/fast_slam_20260914/bag_20260914_map.png",
+        map_yaml={"resolution": 0.05, "origin": [-14.8, -29.1, 0.0], "width": 709, "height": 755},
         network_note="真机位于 pc10 (192.168.3.x 独立 NAT / ROS_DOMAIN_ID=102)，过渡期保留 webv2，禁止双入口并发写。",
         safety_note="示教仅允许释放双臂；躯干/底盘/头部绝不释放。软件 E-Stop 不等同于硬急停。",
         joints=joints,
@@ -123,6 +154,7 @@ def _piper_descriptor() -> RobotDescriptor:
                     lower=lo,
                     upper=hi,
                     default=defaults[i - 1],
+                    urdf_joint=f"{side}_joint{i}",
                 )
             )
         joints.append(
@@ -135,6 +167,8 @@ def _piper_descriptor() -> RobotDescriptor:
                 upper=1.0,
                 default=0.85,
                 is_gripper=True,
+                urdf_joint=f"{side}_gripper_joint1",
+                urdf_scale=0.05,
             )
         )
     return RobotDescriptor(
@@ -144,6 +178,7 @@ def _piper_descriptor() -> RobotDescriptor:
         mode="mock",
         connector_type="mock",
         arms_scope=["left", "right"],
+        urdf_url="/assets/urdf/piper_dual_d405/robot.urdf",
         network_note="主路径走 motrix-edge (DualPiperAdapter 14-DOF) + Robot Pipeline；过渡期可互斥桥接 motphys:8095 + omah:18100。",
         safety_note="Piper 唯一 CAN 写者归 Robot Pipeline，严禁出现第二 CAN 写者；不碰 motphys 真控制端与 oldpiper。",
         joints=joints,
@@ -221,7 +256,7 @@ def _w1_descriptor() -> RobotDescriptor:
             joints=True,
             urdf_3d=True,
             motrix_mirror=True,
-            ee_6d=False,
+            ee_6d=True,
             atomic_actions=True,
             workflows=True,
             navigation=False,
@@ -241,9 +276,9 @@ def _w1_descriptor() -> RobotDescriptor:
 
 
 class MockRobotConnector(RobotConnector):
-    """Full-fidelity deterministic mock simulator for R1 Pro, Piper Dual, and Dexforce W1."""
+    """Full-fidelity deterministic mock simulator for built-in and dynamically imported robots."""
 
-    def __init__(self, descriptor: RobotDescriptor) -> None:
+    def __init__(self, descriptor: RobotDescriptor, custom_robots_dir: Path | None = None) -> None:
         self.descriptor = descriptor
         self._positions: dict[str, float] = {j.name: j.default for j in descriptor.joints}
         self._targets: dict[str, float] = dict(self._positions)
@@ -255,7 +290,15 @@ class MockRobotConnector(RobotConnector):
         self._sim_time: float = 0.0
         self._last_obs_ts: float = time.time()
 
-        # End-effector state (simple kinematics)
+        # Real URDF FK/IK solver (lazy-safe offline pure-Python kinematics)
+        self._kin = None
+        try:
+            from ..kinematics import RobotKinematics
+            self._kin = RobotKinematics(descriptor, custom_robots_dir=custom_robots_dir)
+        except Exception:
+            self._kin = None
+
+        # Fallback end-effector state when no URDF kinematics
         self._ee_offsets: dict[str, list[float]] = {
             "left": [0.42, 0.24, 0.96, 0.0, 12.0, 0.0],
             "right": [0.42, -0.24, 0.96, 0.0, 12.0, 0.0],
@@ -416,8 +459,8 @@ class MockRobotConnector(RobotConnector):
                     self._targets[j.name] = max(j.lower, min(j.upper, osc))
             self._policy.infer_hz = 10.0
 
-        # Smooth joint tracking
-        max_rate = 1.6  # rad/s
+        # Smooth joint tracking (mock simulation servo speed)
+        max_rate = 2.8  # rad/s
         for j in self.descriptor.joints:
             cur = self._positions[j.name]
             tgt = self._targets[j.name]
@@ -435,7 +478,7 @@ class MockRobotConnector(RobotConnector):
             if self._temps[j.name] < 72.0:
                 self._temps[j.name] = round(34.5 + abs(self._efforts[j.name]) * 2.1 + 0.4 * math.sin(self._sim_time * 0.3), 1)
 
-        # Navigation motion update
+        # Navigation motion update (holonomic omnidirectional translation + yaw alignment)
         if self._nav.supported:
             if self._nav.localization_spin_active:
                 step_yaw = 0.7 * dt
@@ -448,21 +491,27 @@ class MockRobotConnector(RobotConnector):
                 gx, gy, gyaw = self._nav.goal_map["x"], self._nav.goal_map["y"], self._nav.goal_map["yaw"]
                 dx, dy = gx - px, gy - py
                 dist = math.hypot(dx, dy)
-                if dist > 0.05:
-                    speed = min(0.55, dist)
-                    self._nav.pose_map["x"] = round(px + (dx / dist) * speed * dt, 4)
-                    self._nav.pose_map["y"] = round(py + (dy / dist) * speed * dt, 4)
-                    self._nav.pose_map["yaw"] = round(math.atan2(dy, dx), 4)
+                dyaw = math.atan2(math.sin(gyaw - pyaw), math.cos(gyaw - pyaw))
+                pos_done = dist <= 0.04
+                yaw_done = abs(dyaw) <= 0.05
+                if pos_done and yaw_done:
+                    self._nav.pose_map = {"x": round(gx, 4), "y": round(gy, 4), "yaw": round(gyaw, 4)}
+                    self._nav.goal_map = None
+                    self._nav.path_points = []
+                    self._nav.mode = "MANUAL"
                 else:
-                    # Align final yaw then arrive
-                    dyaw = math.atan2(math.sin(gyaw - pyaw), math.cos(gyaw - pyaw))
-                    if abs(dyaw) > 0.05:
-                        self._nav.pose_map["yaw"] = round(pyaw + max(-1.2 * dt, min(1.2 * dt, dyaw)), 4)
+                    if not pos_done:
+                        step_d = min(dist, max(1.2, min(3.4, dist * 4.0)) * dt)
+                        self._nav.pose_map["x"] = round(px + (dx / dist) * step_d, 4)
+                        self._nav.pose_map["y"] = round(py + (dy / dist) * step_d, 4)
                     else:
-                        self._nav.pose_map = {"x": round(gx, 4), "y": round(gy, 4), "yaw": round(gyaw, 4)}
-                        self._nav.goal_map = None
-                        self._nav.path_points = []
-                        self._nav.mode = "MANUAL"
+                        self._nav.pose_map["x"] = round(gx, 4)
+                        self._nav.pose_map["y"] = round(gy, 4)
+                    if not yaw_done:
+                        step_y = max(-4.8 * dt, min(4.8 * dt, dyaw))
+                        self._nav.pose_map["yaw"] = round(pyaw + step_y, 4)
+                    else:
+                        self._nav.pose_map["yaw"] = round(gyaw, 4)
             elif self._nav.mode == "MANUAL" and self._sim_time < self._chassis_cmd_until:
                 vx = self._nav.chassis_vel["vx"]
                 vy = self._nav.chassis_vel["vy"]
@@ -508,26 +557,31 @@ class MockRobotConnector(RobotConnector):
         poses: dict[str, EEPose] = {}
         if not self.descriptor.capabilities.ee_6d:
             return poses
-        for side in ("left", "right"):
-            base = self._ee_offsets[side]
-            # Approximate perturbation from first 3 arm joints
-            if self.descriptor.robot_type == "r1pro":
-                j1 = self._positions.get(f"{side}_arm_1", 0.0)
-                j2 = self._positions.get(f"{side}_arm_2", 0.0)
-                j4 = self._positions.get(f"{side}_arm_4", 0.0)
-            else:
-                j1 = self._positions.get(f"{side}_j1", 0.0)
-                j2 = self._positions.get(f"{side}_j2", 0.0)
-                j4 = self._positions.get(f"{side}_j3", 0.0)
+        if self._kin is not None:
+            for side in self._kin.arm_cfg.keys():
+                fk = self._kin.fk(side, self._positions)
+                poses[side] = EEPose(
+                    arm=side,
+                    frame=fk["base_frame"],
+                    x=round(fk["position"][0], 4),
+                    y=round(fk["position"][1], 4),
+                    z=round(fk["position"][2], 4),
+                    roll_deg=round(fk["rpy_deg"][0], 2),
+                    pitch_deg=round(fk["rpy_deg"][1], 2),
+                    yaw_deg=round(fk["rpy_deg"][2], 2),
+                )
+            return poses
+        for side in (self.descriptor.arms_scope or ["left", "right"]):
+            base = self._ee_offsets.get(side, [0.42, 0.0, 0.90, 0.0, 0.0, 0.0])
             poses[side] = EEPose(
                 arm=side,
                 frame="base_link",
-                x=round(base[0] + 0.14 * math.sin(j2) + 0.08 * math.cos(j4), 4),
-                y=round(base[1] + 0.12 * math.sin(j1), 4),
-                z=round(base[2] + 0.12 * math.cos(j2) + 0.09 * math.sin(j4), 4),
-                roll_deg=round(base[3] + math.degrees(j1) * 0.2, 2),
-                pitch_deg=round(base[4] + math.degrees(j4) * 0.25, 2),
-                yaw_deg=round(base[5] + math.degrees(j1) * 0.4, 2),
+                x=round(base[0], 4),
+                y=round(base[1], 4),
+                z=round(base[2], 4),
+                roll_deg=round(base[3], 2),
+                pitch_deg=round(base[4], 2),
+                yaw_deg=round(base[5], 2),
             )
         return poses
 
@@ -642,7 +696,7 @@ class MockRobotConnector(RobotConnector):
             overlays.append(
                 f'<rect x="{cx - 42}" y="{cy - 54}" width="84" height="108" rx="4" fill="rgba(13,148,136,0.18)" stroke="#14b8a6" stroke-width="2"/>'
                 f'<rect x="{cx - 42}" y="{cy - 72}" width="118" height="18" rx="3" fill="#0d9488"/>'
-                f'<text x="{cx - 36}" y="{cy - 59}" fill="#ffffff" font-size="11" font-family="monospace">{self._perc.yolo_prompt} 0.91 [g{self._perc.yolo_generation}]</text>'
+                f'<text x="{cx - 36}" y="{cy - 59}" fill="#ffffff" font-size="11" font-family="monospace">{html.escape(str(self._perc.yolo_prompt), quote=True)} 0.91 [g{self._perc.yolo_generation}]</text>'
             )
 
         # Latched mask indicator
@@ -658,7 +712,7 @@ class MockRobotConnector(RobotConnector):
                 f'<line x1="{cx}" y1="{cy}" x2="{cx + 52}" y2="{cy - 8}" stroke="#ef4444" stroke-width="2.5"/>'
                 f'<line x1="{cx}" y1="{cy}" x2="{cx - 12}" y2="{cy - 48}" stroke="#22c55e" stroke-width="2.5"/>'
                 f'<line x1="{cx}" y1="{cy}" x2="{cx - 32}" y2="{cy + 28}" stroke="#3b82f6" stroke-width="2.5"/>'
-                f'<text x="14" y="42" fill="#facc15" font-size="11" font-family="monospace">FoundationPose: {self._perc.foundation_pose_phase.upper()}</text>'
+                f'<text x="14" y="42" fill="#facc15" font-size="11" font-family="monospace">FoundationPose: {html.escape(str(self._perc.foundation_pose_phase).upper(), quote=True)}</text>'
             )
 
         # ArUco marker overlay
@@ -698,7 +752,7 @@ class MockRobotConnector(RobotConnector):
             '<rect x="52" y="150" width="110" height="58" rx="6" fill="#1d4ed8" fill-opacity="0.35" stroke="#60a5fa" stroke-width="1.5"/>'
             '<text x="64" y="183" fill="#93c5fd" font-size="11" font-family="monospace">WORK TRAY</text>'
             + "".join(overlays)
-            + f'<text x="14" y="22" fill="#e2e8f0" font-size="12" font-family="monospace">{self.descriptor.id} · {stream_key}</text>'
+            + f'<text x="14" y="22" fill="#e2e8f0" font-size="12" font-family="monospace">{html.escape(str(self.descriptor.id), quote=True)} · {html.escape(str(stream_key), quote=True)}</text>'
             + f'<text x="394" y="254" fill="#94a3b8" font-size="11" font-family="monospace">{ts} MOCK</text>'
             + "</svg>"
         )
@@ -714,6 +768,22 @@ class MockRobotConnector(RobotConnector):
     ) -> dict[str, Any]:
         if not self.descriptor.capabilities.ee_6d:
             raise SafetyError(400, "ee_unsupported", f"{self.descriptor.name} 未声明末端 6D 控制能力。")
+        if self._kin is not None:
+            cur_fk = self._kin.fk(arm, self._targets)
+            tgt_xyz = [
+                cur_fk["position"][0] + dx,
+                cur_fk["position"][1] + dy,
+                cur_fk["position"][2] + dz,
+            ]
+            tgt_rpy = [
+                cur_fk["rpy_deg"][0] + droll_deg,
+                cur_fk["rpy_deg"][1] + dpitch_deg,
+                cur_fk["rpy_deg"][2] + dyaw_deg,
+            ]
+            ik = self._kin.solve_ik(arm, tgt_xyz, tgt_rpy, self._targets)
+            for jn, val in ik["solved_arm_joints"].items():
+                self._targets[jn] = val
+            return {"accepted": True, "arm": arm, "ik": ik, "ee_pose": self._compute_ee_poses().get(arm)}
         base = self._ee_offsets[arm]
         base[0] = round(max(0.15, min(0.85, base[0] + dx)), 4)
         base[1] = round(max(-0.65, min(0.65, base[1] + dy)), 4)
@@ -721,16 +791,6 @@ class MockRobotConnector(RobotConnector):
         base[3] = round(base[3] + droll_deg, 2)
         base[4] = round(base[4] + dpitch_deg, 2)
         base[5] = round(base[5] + dyaw_deg, 2)
-        # Also nudge arm joints slightly so 3D view visually responds
-        if self.descriptor.robot_type == "r1pro":
-            j1, j2, j4 = f"{arm}_arm_1", f"{arm}_arm_2", f"{arm}_arm_4"
-        else:
-            j1, j2, j4 = f"{arm}_j1", f"{arm}_j2", f"{arm}_j3"
-        spec_map = {j.name: j for j in self.descriptor.joints}
-        for jn, delta in ((j1, dy * 1.8), (j2, dx * 1.6), (j4, dz * 1.6)):
-            if jn in spec_map:
-                sp = spec_map[jn]
-                self._targets[jn] = max(sp.lower, min(sp.upper, self._targets[jn] + delta))
         return {"accepted": True, "arm": arm, "ee_pose": self._compute_ee_poses().get(arm)}
 
     def send_chassis_velocity(self, vx: float, vy: float, omega: float, duration_s: float = 0.4) -> dict[str, Any]:
@@ -966,17 +1026,28 @@ class MockRobotConnector(RobotConnector):
                 )
             if self._policy.infer_running:
                 raise SafetyError(409, "infer_running", "请先停止当前推理会话再动态切换检查点。")
+            for key in self._policy.wizard_steps:
+                self._policy.wizard_steps[key] = key == "self_check"
+            self._policy.last_offline_eval = None
             self._policy.active_checkpoint = found.id
             self._policy.rtc_enabled = found.rtc_supported
             return {"ok": True, "active_checkpoint": found.id, "rtc_enabled": found.rtc_supported}
 
         if action == "set_config":
+            if self._policy.infer_running:
+                raise SafetyError(409, "infer_running", "先停止推理再更改配置。")
+            self._policy.wizard_steps["live_armed"] = False
+            self._policy.wizard_steps["offline_replay"] = False
+            self._policy.last_offline_eval = None
             if "task_intent" in payload:
                 self._policy.task_intent = str(payload["task_intent"])
             if "execution_schema" in payload:
                 self._policy.execution_schema = str(payload["execution_schema"])
             if "speed_scale" in payload:
-                self._policy.speed_scale = max(0.1, min(1.0, float(payload["speed_scale"])))
+                value = float(payload["speed_scale"])
+                if not math.isfinite(value):
+                    raise SafetyError(400, "invalid_number", "速度比例必须为有限数值。")
+                self._policy.speed_scale = max(0.1, min(1.0, value))
             return {"ok": True, "policy": self._policy.model_dump()}
 
         if action == "wizard_step":
@@ -984,10 +1055,24 @@ class MockRobotConnector(RobotConnector):
             if step_key not in self._policy.wizard_steps:
                 raise SafetyError(400, "invalid_wizard_step", f"未知向导步骤：{step_key}")
             val = bool(payload.get("done", True))
+            order = list(self._policy.wizard_steps)
+            index = order.index(step_key)
+            if val and not all(self._policy.wizard_steps[k] for k in order[:index]):
+                raise SafetyError(409, "wizard_prerequisite", "必须按顺序完成 Mock 安全演示步骤，禁止跳步。")
+            if val and step_key == "offline_replay":
+                raise SafetyError(409, "evaluation_required", "离线步骤只能由 Mock 评测完成，不接受勾选伪造评测。")
             self._policy.wizard_steps[step_key] = val
+            for key in order[index + 1:]:
+                self._policy.wizard_steps[key] = False
+            self._policy.infer_running = False
+            self._policy.infer_hz = 0.0
             return {"ok": True, "wizard_steps": dict(self._policy.wizard_steps)}
 
         if action == "offline_eval":
+            if self.descriptor.capabilities.piper_safety_wizard and not all(
+                self._policy.wizard_steps[k] for k in ("self_check", "homing", "manual_slow_test")
+            ):
+                raise SafetyError(409, "wizard_prerequisite", "先完成 Mock 自检、回零确认和低速确认步骤。")
             dataset = str(payload.get("dataset") or ("set_the_plates_real_all_mcap_20261119_v1" if self.descriptor.robot_type == "piper_dual" else "r1pro_basket_mcap_sample"))
             steps = list(range(16))
             gt_j1 = [round(0.2 + 0.35 * math.sin(i * 0.35), 4) for i in steps]
@@ -996,6 +1081,10 @@ class MockRobotConnector(RobotConnector):
             pred_j2 = [round(v - 0.018 * math.sin(i * 0.5), 4) for i, v in enumerate(gt_j2)]
             rmse = round(math.sqrt(sum((a - b) ** 2 for a, b in zip(gt_j1, pred_j1)) / len(steps)), 4)
             res = {
+                "data_source": "synthetic_mock",
+                "dataset_parsed": False,
+                "qualified_for_hardware": False,
+                "disclaimer": "生成的 Mock 演示曲线；未读取 MCAP/LeRobot，不是真实模型评测或硬件放行证据。",
                 "eval_id": f"eval-{uuid.uuid4().hex[:8]}",
                 "timestamp": utc_iso(),
                 "dataset": dataset,
@@ -1016,10 +1105,11 @@ class MockRobotConnector(RobotConnector):
             }
             self._policy.last_offline_eval = res
             self._policy.wizard_steps["offline_replay"] = True
+            self._policy.wizard_steps["live_armed"] = False
             return {"ok": True, "eval": res}
 
         if action == "start_infer":
-            if self.descriptor.capabilities.piper_safety_wizard and not self._policy.wizard_steps.get("live_armed"):
+            if self.descriptor.capabilities.piper_safety_wizard and not all(self._policy.wizard_steps.values()):
                 raise SafetyError(409, "live_arm_required", "Piper 安全门禁：必须完成 6 步武装清单并勾选「⑤ 武装 Live（推理）」后才能启动实时推理。")
             self._policy.infer_running = True
             self._policy.infer_hz = 10.0
@@ -1060,7 +1150,9 @@ class MockRobotConnector(RobotConnector):
             self._nav.mode = "FAULT"
         self._policy.infer_running = False
         self._policy.infer_hz = 0.0
-        self._policy.wizard_steps["live_armed"] = False
+        for key in self._policy.wizard_steps:
+            self._policy.wizard_steps[key] = key == "self_check"
+        self._policy.last_offline_eval = None
         self._perc.aruco_fine_enabled = False
         self._log_perc(f"SAFE STOP triggered: {reason}")
 

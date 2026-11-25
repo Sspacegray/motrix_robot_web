@@ -15,8 +15,8 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%230d9488'><polygon points='12 2 2 22 22 22'/></svg>">
+  <link rel="stylesheet" href="/css/style.css?v=LOO1-20261124-cancel-map-v5">
+  <link rel="icon" type="image/svg+xml" href="/assets/motphys-icon.svg?v=LOO1-20261124-cancel-map-v5">
 </head>
 <body>
 
@@ -24,12 +24,23 @@
   <header class="top-header">
     <div class="brand-section">
       <a href="/" class="brand-logo" title="Motphys Robot Web">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="12 2 2 22 22 22"></polygon>
-        </svg>
-        <span>Motphys <span style="font-weight:400; color:var(--text-muted); font-size:14px;">Loop / Robot Web</span></span>
+        <img class="motphys-brand-asset" src="/assets/motphys-logo.svg?v=LOO1-20261124-cancel-map-v5" alt="Motphys Logo" width="124" height="20">
+        <span class="loop-wordmark">Loop</span>
       </a>
-      <div class="brand-divider"></div>
+      <nav class="primary-nav" aria-label="主导航">
+        <button class="tab-btn" data-tab="overview">总览</button>
+        <button class="tab-btn" data-tab="actions" aria-selected="true">动作与工作流</button>
+        <button class="tab-btn" data-tab="joints">关节 / 3D</button>
+        <button class="tab-btn" data-tab="navigation" id="tabBtnNav">地图导航</button>
+        <button class="tab-btn" data-tab="perception">视觉感知</button>
+        <button class="tab-btn" data-tab="policy">策略评测</button>
+        <button class="tab-btn" data-tab="diagnostics">安全诊断</button>
+      </nav>
+    </div>
+
+    <span class="header-environment"><span class="environment-dot"></span> Local workspace</span>
+  </header>
+  <section class="robot-control-strip" aria-label="本地机器人控制状态">
       <div class="robot-selector-wrap">
         <label for="robotSelector" style="font-size:12px; color:var(--text-muted); font-weight:500;">机器人机型:</label>
         <select id="robotSelector" class="select-clean" aria-label="选择机器人机型">
@@ -37,28 +48,26 @@
           <option value="piper-dual-mock">Piper Dual (14-DOF 双臂+3相机)</option>
           <option value="dex-w1-mock">Dexforce W1 (20-DOF 人形+URDF)</option>
         </select>
+        <button type="button" class="btn btn-sm btn-import-robot" id="btnOpenRobotImport" title="上传标准机器人 URDF/Manifest .zip 包并执行 6 项入库预检">+ 导入机器人</button>
       </div>
-    </div>
-
-    <!-- Status & Authority Indicators & Global E-Stop -->
     <div class="header-status-group">
       <!-- Mode Pill -->
       <span class="pill-badge pill-mock" id="headerModePill" title="当前运行模式: MOCK / SIM / REAL">MOCK</span>
 
       <!-- Operator Task Permission Pill -->
       <button class="pill-badge pill-auth" id="headerAuthPill" title="点击快速切换高层任务权限 (Viewer / Operator / Admin)" data-perm="operator">
-        Perm: OPERATOR
+        Demo role: OPERATOR
       </button>
 
       <!-- Underlying Control Lease Pill -->
       <button class="pill-badge pill-auth" id="headerLeasePill" title="底层控制 Lease: 点击申请或释放控制权" data-active="false">
         <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span>
-        Lease: 只读未授权
+        Mock Lease: 只读未授权
       </button>
 
       <!-- Connection & Latency Indicator -->
-      <span style="font-family:var(--font-mono); font-size:11px; color:var(--success); padding:0 4px;" id="headerConnAge" title="DDS / CAN 反馈延迟与采样频率">
-        18ms · 30Hz
+      <span style="font-family:var(--font-mono); font-size:11px; color:var(--success); padding:0 4px;" id="headerConnAge" title="Mock 反馈延迟与采样频率（非真实 DDS/CAN）">
+        等待 Mock 反馈
       </span>
 
       <div class="brand-divider" style="height:16px;"></div>
@@ -73,78 +82,19 @@
         软件急停 (Space)
       </button>
     </div>
-  </header>
+  </section>
 
-  <!-- Secondary Navigation Tabs Bar (Motphys Loop Layout) -->
-  <nav class="sub-nav-bar" aria-label="功能域导航">
-    <div class="tab-list" role="tablist">
-      <button class="tab-btn" role="tab" aria-selected="true" data-tab="overview">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="7" height="7"></rect>
-          <rect x="14" y="3" width="7" height="7"></rect>
-          <rect x="14" y="14" width="7" height="7"></rect>
-          <rect x="3" y="14" width="7" height="7"></rect>
-        </svg>
-        总览与拓扑
-      </button>
-
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="joints">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
-        关节与 3D 视图
-      </button>
-
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="actions">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 11 12 14 22 4"></polyline>
-          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-        </svg>
-        动作与工作流
-      </button>
-
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="navigation" id="tabBtnNav">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="3 11 22 2 13 21 11 13 3 11"></polygon>
-        </svg>
-        2D 地图与底盘
-      </button>
-
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="perception">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-          <circle cx="12" cy="13" r="4"></circle>
-        </svg>
-        视觉感知工作台
-      </button>
-
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="policy">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2v20"></path>
-          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-        </svg>
-        策略推理与评测
-      </button>
-
-      <button class="tab-btn" role="tab" aria-selected="false" data-tab="diagnostics">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-        </svg>
-        安全与诊断中心
-      </button>
-    </div>
-
-    <div class="sub-nav-right">
-      <span>Motrix Sim 只读镜像: <strong style="color:var(--accent);">Active</strong></span>
-    </div>
-  </nav>
+  <section class="workspace-context" aria-label="工作区上下文">
+    <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><span>Robot Web</span><span aria-hidden="true">/</span><strong id="currentSectionCrumb">动作与工作流</strong></div>
+    <div class="mock-disclosure" role="note"><span id="uiBuildId">LOO1-20261124-cancel-map-v5</span> · <span id="workspaceModeDisclosure">LOCAL MOCK · 无真实机器人连接</span></div>
+    <div id="featureAvailabilityNote" class="feature-availability-note" role="status"></div>
+  </section>
 
   <!-- App Main Content Panes -->
   <main class="app-content">
-    <div id="tabPaneOverview" class="tab-panel active"></div>
+    <div id="tabPaneOverview" class="tab-panel"></div>
     <div id="tabPaneJoints" class="tab-panel"></div>
-    <div id="tabPaneActions" class="tab-panel"></div>
+    <div id="tabPaneActions" class="tab-panel active"></div>
     <div id="tabPaneNavigation" class="tab-panel"></div>
     <div id="tabPanePerception" class="tab-panel"></div>
     <div id="tabPanePolicy" class="tab-panel"></div>
@@ -165,7 +115,7 @@
           注意：软件急停 ≠ 硬件断电急停。
         </p>
         <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-          当前所有运动下发通道与自主工作流已被网关全部阻断，底层 Lease 控制权已强制撤销。若现场发生物理碰撞或机械危险，请立即按下物理断电蘑菇头急停！
+          本地 Mock 运动与工作流已停止，Mock Lease 已撤销；未连接真实硬件，不能确认任何远程停机。若现场发生物理碰撞或机械危险，请立即按下物理断电蘑菇头急停！
         </p>
         <div style="background:var(--bg-subtle); padding:10px; border-radius:var(--radius-sm); font-size:12px; font-family:var(--font-mono); margin-bottom:14px;" id="estopReasonDetail">
           原因: 手动触发 (时间: --)
@@ -185,7 +135,7 @@
       </div>
       <div class="modal-body">
         <div style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
-          获取 Lease 后将拥有实机运动控制权。系统将启动 <strong>3 秒操作心跳看门狗</strong>（断联自动急停，不自动恢复）；持续 5 分钟闲置将自动解除授权。
+          本版本 Lease 只授权本地 Mock 演示，不具备实机控制权。系统将启动 <strong>3 秒操作心跳看门狗</strong>（超时停机放权，不自动恢复）；持续 5 分钟闲置将自动解除授权。
         </div>
 
         <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:14px;">
@@ -216,6 +166,6 @@
   </div>
 
   <!-- Entry Script -->
-  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/js/app.js?v=LOO1-20261124-cancel-map-v5"></script>
 </body>
 </html>

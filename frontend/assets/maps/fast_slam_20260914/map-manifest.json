@@ -1,0 +1,33 @@
+{
+  "id": "fast_slam_20260914",
+  "name": "R1 Pro Fast-SLAM Plus 高精地图 (bag_20260914 · 0.05m/pix + 98.1万点 3D 点云)",
+  "algorithm": "fast_slam_plus (Fast-LIO2 + PGO)",
+  "source_pcd": "galaxea_overlay/R1_pro-pipeline/src/r1_pro_slam/fast_slam_plus/maps/virtual_machine_map.pcd",
+  "source_2d": "galaxea_test/offline_test/output/bag_20260914_map.{pgm,yaml}",
+  "image_url": "/assets/maps/fast_slam_20260914/bag_20260914_map.png",
+  "yaml_url": "/assets/maps/fast_slam_20260914/bag_20260914_map.yaml",
+  "pcd_url": "/assets/maps/fast_slam_20260914/virtual_machine_map.pcd",
+  "width": 709,
+  "height": 755,
+  "resolution": 0.05,
+  "origin": [
+    -14.8,
+    -29.1,
+    0.0
+  ],
+  "point_count": 981005,
+  "files": {
+    "virtual_machine_map.pcd": {
+      "bytes": 15696270,
+      "sha256": "39477580bc353d21059e5aeab53a416db538fc6097a4ae4935450a686464a335"
+    },
+    "bag_20260914_map.png": {
+      "bytes": 15679,
+      "sha256": "3f44a8dd8fb88fb184379f1a8139a670470980e407b9a2c009eb2f6488b0d97c"
+    },
+    "bag_20260914_map.yaml": {
+      "bytes": 134,
+      "sha256": "ff3a5d9754aaf80dfbdf5d1d3144d742fcaeaef6c10df1759df6b6007945aabc"
+    }
+  }
+}

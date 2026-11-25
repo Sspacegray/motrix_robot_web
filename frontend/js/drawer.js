@@ -1,5 +1,6 @@
 // Motphys Loop Execution Task Drawer
 import { api } from "./api.js";
+import { escapeHtml, formatLocalTime } from "./ui-format.js";
 
 class ExecutionDrawer {
   constructor() {
@@ -8,6 +9,7 @@ class ExecutionDrawer {
     this.currentJobId = null;
     this.pollInterval = null;
     this.followLogs = true;
+    this.currentJob = null;
     this._initDOMElements();
   }
 
@@ -18,19 +20,31 @@ class ExecutionDrawer {
 
     this.panel = document.createElement("div");
     this.panel.className = "drawer-panel";
+    this.panel.setAttribute("role", "dialog");
+    this.panel.setAttribute("aria-label", "Execution details");
+    this.panel.setAttribute("aria-modal", "true");
+    this.panel.tabIndex = -1;
+    this.panel.inert = true;
     this.panel.innerHTML = `
       <div class="drawer-header">
         <div class="drawer-title-wrap">
-          <span class="badge" id="drawerBadge">Pending</span>
-          <span class="drawer-title" id="drawerJobId">--</span>
+          <span class="drawer-title">Execution task</span>
         </div>
         <div class="drawer-actions">
-          <button class="btn btn-sm" id="drawerRetryBtn">Retry</button>
-          <button class="btn btn-sm btn-danger" id="drawerCancelBtn" style="display:none;">Stop</button>
+          <button class="btn btn-sm" id="drawerPauseBtn" style="display:none;" title="暂停任务（Live 模式下立即安全停机）">⏸ 暂停</button>
+          <button class="btn btn-sm btn-step-debug" id="drawerStepBtn" style="display:none;" title="仅执行下一原子步骤并自动再次暂停">⏭ 下一步</button>
+          <button class="btn btn-sm btn-primary" id="drawerResumeBtn" style="display:none;" title="恢复连续执行剩余全部步骤">▶ 继续全部</button>
+          <button class="btn btn-sm" id="drawerRetryBtn" disabled title="重试仅执行无运动指令的 Mock dry-run">Retry dry-run</button>
+          <button class="btn btn-sm btn-danger" id="drawerCancelBtn" style="display:none;">Cancel</button>
           <button class="drawer-close-btn" id="drawerCloseBtn" title="Close (Esc)">✕</button>
         </div>
       </div>
       <div class="drawer-body">
+        <div class="drawer-record"><span class="badge" id="drawerBadge">Pending</span><span id="drawerJobId">--</span><span id="drawerModeTag">LOCAL MOCK</span></div>
+        <div id="drawerPauseBanner" class="drawer-pause-banner" style="display:none;">
+          <div style="font-weight:700; margin-bottom:2px;">⏸ 任务已暂停（单步断点 / 手动暂停）</div>
+          <div id="drawerPauseReason" style="font-size:12px;"></div>
+        </div>
         <div class="meta-grid">
           <div class="meta-item">
             <span class="meta-label">Flow</span>
@@ -41,15 +55,15 @@ class ExecutionDrawer {
             <span class="meta-val" id="drawerRun">--</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">Created</span>
+            <span class="meta-label">Created · UTC+8</span>
             <span class="meta-val" id="drawerCreated">--</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">Started</span>
+            <span class="meta-label">Started · UTC+8</span>
             <span class="meta-val" id="drawerStarted">--</span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">Finished</span>
+            <span class="meta-label">Finished · UTC+8</span>
             <span class="meta-val" id="drawerFinished">--</span>
           </div>
           <div class="meta-item">
@@ -60,6 +74,11 @@ class ExecutionDrawer {
             <span class="meta-label">Pipeline</span>
             <span class="meta-val" id="drawerPipeline">--</span>
           </div>
+        </div>
+
+        <div id="drawerWorkflowCtxWrap" style="display:none; margin-bottom:16px; background:var(--bg-subtle); border:1px solid var(--border); border-radius:var(--radius-md); padding:10px 12px;">
+          <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px;">工作流参数传递上下文 (Workflow Context)</div>
+          <div id="drawerWorkflowCtxBody" style="font-family:var(--font-mono); font-size:11px; color:var(--text-main); white-space:pre-wrap; word-break:break-all;"></div>
         </div>
 
         <h4 style="font-size:14px; font-weight:700; margin-bottom:10px;">Steps</h4>
@@ -97,23 +116,85 @@ class ExecutionDrawer {
     // Event listeners
     this.panel.querySelector("#drawerCloseBtn").addEventListener("click", () => this.close());
     this.panel.querySelector("#drawerRetryBtn").addEventListener("click", async () => {
-      if (!this.currentJobId) return;
+      if (!this.currentJobId || !this.currentJob?.workflow_id || this.currentJob.state === "Running" || this.currentJob.state === "Paused") return;
+      const button = this.panel.querySelector("#drawerRetryBtn");
+      button.disabled = true;
       try {
-        const res = await api.retryJob(this.currentJobId);
+        const res = await api.retryJob(this.currentJobId, true);
         this.open(res.job.job_id);
       } catch (err) {
         alert("Retry failed: " + err.message);
+        this._fetchJob();
+      }
+    });
+
+    const pauseBtn = this.panel.querySelector("#drawerPauseBtn");
+    pauseBtn.addEventListener("click", async () => {
+      if (!this.currentJobId) return;
+      pauseBtn.disabled = true;
+      const jobId = this.currentJobId;
+      try {
+        await api.pauseJob(jobId);
+        if (this.currentJobId === jobId) await this._fetchJob();
+      } catch (err) {
+        alert("Pause failed: " + err.message);
+        if (this.currentJobId === jobId) await this._fetchJob();
+      } finally {
+        pauseBtn.disabled = false;
+      }
+    });
+
+    const stepBtn = this.panel.querySelector("#drawerStepBtn");
+    stepBtn.addEventListener("click", async () => {
+      if (!this.currentJobId) return;
+      stepBtn.disabled = true;
+      const jobId = this.currentJobId;
+      try {
+        await api.stepJob(jobId);
+        if (this.currentJobId === jobId) {
+          await this._fetchJob();
+          if (!this.pollInterval) this.pollInterval = setInterval(() => this._fetchJob(), 600);
+        }
+      } catch (err) {
+        alert("Step failed: " + err.message);
+        if (this.currentJobId === jobId) await this._fetchJob();
+      } finally {
+        stepBtn.disabled = false;
+      }
+    });
+
+    const resumeBtn = this.panel.querySelector("#drawerResumeBtn");
+    resumeBtn.addEventListener("click", async () => {
+      if (!this.currentJobId) return;
+      resumeBtn.disabled = true;
+      const jobId = this.currentJobId;
+      try {
+        await api.resumeJob(jobId);
+        if (this.currentJobId === jobId) {
+          await this._fetchJob();
+          if (!this.pollInterval) this.pollInterval = setInterval(() => this._fetchJob(), 600);
+        }
+      } catch (err) {
+        alert("Resume failed: " + err.message);
+        if (this.currentJobId === jobId) await this._fetchJob();
+      } finally {
+        resumeBtn.disabled = false;
       }
     });
 
     const cancelBtn = this.panel.querySelector("#drawerCancelBtn");
     cancelBtn.addEventListener("click", async () => {
       if (!this.currentJobId) return;
+      cancelBtn.disabled = true;
+      const jobId = this.currentJobId;
       try {
-        await api.cancelJob(this.currentJobId);
-        this._fetchJob();
+        await api.cancelJob(jobId);
+        if (this.currentJobId === jobId) await this._fetchJob();
       } catch (err) {
         alert("Cancel failed: " + err.message);
+        if (this.currentJobId === jobId) await this._fetchJob();
+      } finally {
+        cancelBtn.disabled = false;
       }
     });
 
@@ -122,6 +203,13 @@ class ExecutionDrawer {
       this.followLogs = e.target.checked;
     });
 
+    this.panel.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const controls = [...this.panel.querySelectorAll("button:not(:disabled), input:not(:disabled)")].filter(el => el.offsetParent !== null);
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    });
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && this.panel.classList.contains("open")) {
         this.close();
@@ -130,18 +218,37 @@ class ExecutionDrawer {
   }
 
   async open(jobId) {
+    if (this.pollInterval) clearInterval(this.pollInterval);
     this.currentJobId = jobId;
+    this.currentJob = null;
+    this.previousFocus = document.activeElement;
+    this.panel.inert = false;
+    document.body.classList.add("execution-open");
+    this.panel.querySelector("#drawerRetryBtn").disabled = true;
+    this.panel.querySelector("#drawerPauseBtn").style.display = "none";
+    this.panel.querySelector("#drawerStepBtn").style.display = "none";
+    this.panel.querySelector("#drawerResumeBtn").style.display = "none";
+    this.panel.querySelector("#drawerCancelBtn").style.display = "none";
+    this.panel.querySelector("#drawerPauseBanner").style.display = "none";
+    this.panel.querySelector("#drawerLogsPre").textContent = "Loading local Mock logs…";
     this.backdrop.classList.add("open");
     this.panel.classList.add("open");
+    this.panel.querySelector("#drawerCloseBtn").focus();
     await this._fetchJob();
 
     if (this.pollInterval) clearInterval(this.pollInterval);
-    this.pollInterval = setInterval(() => this._fetchJob(), 1000);
+    if (this.currentJob?.state === "Running" || this.currentJob?.state === "Paused") {
+      this.pollInterval = setInterval(() => this._fetchJob(), 600);
+    }
   }
 
   close() {
     this.backdrop.classList.remove("open");
     this.panel.classList.remove("open");
+    this.panel.inert = true;
+    this.currentJobId = null;
+    document.body.classList.remove("execution-open");
+    this.previousFocus?.focus();
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
@@ -151,14 +258,18 @@ class ExecutionDrawer {
   async _fetchJob() {
     if (!this.currentJobId) return;
     try {
-      const data = await api.getJob(this.currentJobId);
+      const jobId = this.currentJobId;
+      const data = await api.getJob(jobId);
+      if (jobId !== this.currentJobId) return;
+      this.currentJob = data.job;
       this._render(data.job);
-      if (data.job.state !== "Running" && this.pollInterval) {
+      if (data.job.state !== "Running" && data.job.state !== "Paused" && this.pollInterval) {
         clearInterval(this.pollInterval);
         this.pollInterval = null;
       }
     } catch (err) {
       console.warn("Fetch job failed", err);
+      this.panel.querySelector("#drawerLogsPre").textContent = "Unable to load local job: " + err.message;
     }
   }
 
@@ -167,26 +278,59 @@ class ExecutionDrawer {
     badge.className = `badge badge-${job.state.toLowerCase()}`;
     badge.textContent = job.state;
 
+    const modeTag = this.panel.querySelector("#drawerModeTag");
+    if (modeTag) {
+      const isLive = Boolean(job.lease_id);
+      modeTag.textContent = `${isLive ? "LIVE LEASE" : "DRY-RUN"}${job.step_mode ? " · STEP" : ""}`;
+    }
+
     this.panel.querySelector("#drawerJobId").textContent = job.job_id;
     this.panel.querySelector("#drawerFlow").textContent = job.flow_name;
     this.panel.querySelector("#drawerRun").textContent = job.run_id;
-    this.panel.querySelector("#drawerCreated").textContent = job.created_at || "--";
-    this.panel.querySelector("#drawerStarted").textContent = job.started_at || "--";
-    this.panel.querySelector("#drawerFinished").textContent = job.finished_at || "--";
+    this.panel.querySelector("#drawerCreated").textContent = formatLocalTime(job.created_at);
+    this.panel.querySelector("#drawerStarted").textContent = formatLocalTime(job.started_at);
+    this.panel.querySelector("#drawerFinished").textContent = formatLocalTime(job.finished_at);
     this.panel.querySelector("#drawerExit").textContent = job.exit_code !== null ? job.exit_code : "--";
     this.panel.querySelector("#drawerPipeline").textContent = job.pipeline_sha;
 
-    const cancelBtn = this.panel.querySelector("#drawerCancelBtn");
-    cancelBtn.style.display = job.state === "Running" ? "inline-flex" : "none";
+    const isActive = job.state === "Running" || job.state === "Paused";
+    const isPaused = job.state === "Paused";
+    this.panel.querySelector("#drawerRetryBtn").disabled = !job.workflow_id || isActive;
+    this.panel.querySelector("#drawerPauseBtn").style.display = job.state === "Running" ? "inline-flex" : "none";
+    this.panel.querySelector("#drawerStepBtn").style.display = isPaused ? "inline-flex" : "none";
+    this.panel.querySelector("#drawerResumeBtn").style.display = isPaused ? "inline-flex" : "none";
+    this.panel.querySelector("#drawerCancelBtn").style.display = isActive ? "inline-flex" : "none";
+
+    const pauseBanner = this.panel.querySelector("#drawerPauseBanner");
+    const pauseReason = this.panel.querySelector("#drawerPauseReason");
+    if (isPaused) {
+      pauseBanner.style.display = "block";
+      pauseReason.textContent = job.paused_reason || "任务已暂停，可点击「⏭ 下一步」单步推进或「▶ 继续全部」恢复执行。";
+    } else {
+      pauseBanner.style.display = "none";
+      pauseReason.textContent = "";
+    }
+
+    // Render Workflow Context (passed perception/pose parameters)
+    const ctxWrap = this.panel.querySelector("#drawerWorkflowCtxWrap");
+    const ctxBody = this.panel.querySelector("#drawerWorkflowCtxBody");
+    const wfCtx = job.workflow_context && typeof job.workflow_context === "object" ? job.workflow_context : {};
+    if (Object.keys(wfCtx).length > 0) {
+      ctxWrap.style.display = "block";
+      ctxBody.textContent = JSON.stringify(wfCtx, null, 2);
+    } else {
+      ctxWrap.style.display = "none";
+      ctxBody.textContent = "";
+    }
 
     // Render Steps
     const stepsBody = this.panel.querySelector("#drawerStepsBody");
     if (job.steps && job.steps.length > 0) {
       stepsBody.innerHTML = job.steps.map(st => `
         <tr>
-          <td style="font-weight:600;">${st.step}</td>
-          <td><span class="badge badge-${st.phase}">${st.phase}</span></td>
-          <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">${st.detail || "--"}</td>
+          <td style="font-weight:600;">${escapeHtml(st.step)}</td>
+          <td><span class="badge badge-${escapeHtml(st.phase)}">${escapeHtml(st.phase)}</span></td>
+          <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">${escapeHtml(st.detail || "--")}</td>
         </tr>
       `).join("");
     } else {

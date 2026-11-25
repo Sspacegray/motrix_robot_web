@@ -9,9 +9,16 @@ export class RobotApi {
     this.cachedState = null;
   }
 
-  setRobotId(id, force = false) {
+  async setRobotId(id, force = false) {
     if (!force && this.currentRobotId === id && this.sse) return;
+    const oldId = this.currentRobotId;
+    this.stopHeartbeat();
+    if (!force && oldId !== id) {
+      // Release the OLD robot before changing request routing or showing the new robot.
+      await this.post(`/api/robots/${encodeURIComponent(oldId)}/lease/release`);
+    }
     this.currentRobotId = id;
+    this.cachedState = null;
     this.connectSSE();
     this.getState().then((s) => this._notify(s)).catch(() => {});
   }
@@ -23,6 +30,8 @@ export class RobotApi {
   }
 
   _notify(state) {
+    if (state.descriptor?.id !== this.currentRobotId) return;
+    if (!state.authority?.lease_active) this.stopHeartbeat();
     this.cachedState = state;
     for (const cb of this.listeners) {
       try {
@@ -57,11 +66,13 @@ export class RobotApi {
 
   startHeartbeat(leaseId) {
     this.stopHeartbeat();
+    const robotId = this.currentRobotId;
     this.heartbeatTimer = setInterval(async () => {
       try {
-        await this.post(`/api/robots/${this.currentRobotId}/lease/heartbeat`, { lease_id: leaseId });
+        await this.post(`/api/robots/${robotId}/lease/heartbeat`, { lease_id: leaseId });
       } catch (err) {
-        console.warn("Heartbeat failed", err);
+        this.stopHeartbeat();
+        console.warn("Heartbeat failed; explicit reacquire required", err);
       }
     }, 1000);
   }
@@ -104,9 +115,38 @@ export class RobotApi {
     return res.json();
   }
 
-  // Robot management
+  // Robot management & dynamic Robot Package import
   getRobots() {
     return this.get("/api/robots");
+  }
+
+  async inspectRobotZip(file = null, useSample = false) {
+    const url = useSample ? "/api/robots/import/inspect?sample=true" : "/api/robots/import/inspect";
+    const opts = useSample
+      ? { method: "POST" }
+      : { method: "POST", headers: { "Content-Type": "application/zip" }, body: file };
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    return res.json();
+  }
+
+  validateRobotImport(stageId, manifest) {
+    return this.post("/api/robots/import/validate", { stage_id: stageId, manifest });
+  }
+
+  commitRobotImport(stageId, manifest) {
+    return this.post("/api/robots/import/commit", { stage_id: stageId, manifest });
+  }
+
+  deleteCustomRobot(robotId) {
+    return this.delete(`/api/robots/${encodeURIComponent(robotId)}`);
+  }
+
+  probeRos2Bridge(wsUrl, timeoutS = 2.0) {
+    return this.post("/api/robots/ros2/probe", { ws_url: wsUrl, timeout_s: timeoutS });
   }
 
   getState() {
@@ -167,7 +207,43 @@ export class RobotApi {
     });
   }
 
+  // Read-only URDF Kinematics (FK / 6D IK / Trajectory Plan — zero Lease, zero motion)
+  getKinematicsFK(joints = null, arm = null) {
+    return this.post(`/api/robots/${this.currentRobotId}/kinematics/fk`, { joints, arm });
+  }
+
+  solveIK(payload) {
+    return this.post(`/api/robots/${this.currentRobotId}/kinematics/ik`, payload);
+  }
+
+  planJointTrajectory(targets, startJoints = null, maxVel = 1.2, durationS = null) {
+    return this.post(`/api/robots/${this.currentRobotId}/kinematics/plan`, {
+      targets,
+      start_joints: startJoints,
+      max_vel: maxVel,
+      duration_s: durationS,
+    });
+  }
+
   // Navigation
+  getNavMap() {
+    return this.get(`/api/robots/${this.currentRobotId}/navigation/map`);
+  }
+
+  listWaypoints(mapId = null) {
+    const q = new URLSearchParams({ robot_id: this.currentRobotId });
+    if (mapId) q.set("map_id", mapId);
+    return this.get(`/api/navigation/waypoints?${q.toString()}`);
+  }
+
+  saveWaypoint(data) {
+    return this.post("/api/navigation/waypoints", data);
+  }
+
+  deleteWaypoint(waypointId) {
+    return this.delete(`/api/navigation/waypoints/${waypointId}`);
+  }
+
   setNavMode(mode) {
     return this.post(`/api/robots/${this.currentRobotId}/navigation/mode`, { mode });
   }
@@ -221,6 +297,10 @@ export class RobotApi {
     return this.delete(`/api/actions/${actionId}`);
   }
 
+  executeAction(actionId, dryRun = false) {
+    return this.post(`/api/actions/${actionId}/execute`, { dry_run: dryRun });
+  }
+
   importR1Actions(payload) {
     return this.post(`/api/actions/import-r1pro?robot_id=${encodeURIComponent(this.currentRobotId)}`, payload);
   }
@@ -237,8 +317,19 @@ export class RobotApi {
     return this.delete(`/api/workflows/${workflowId}`);
   }
 
-  runWorkflow(workflowId, dryRun = false) {
-    return this.post(`/api/workflows/${workflowId}/run`, { dry_run: dryRun });
+  validateWorkflow(payload) {
+    return this.post("/api/workflows/validate", payload);
+  }
+
+  previewWorkflow(workflowId) {
+    return this.post(`/api/workflows/${workflowId}/preview`, {});
+  }
+
+  runWorkflow(workflowId, dryRun = false, opts = {}) {
+    return this.post(`/api/workflows/${workflowId}/run`, {
+      dry_run: dryRun,
+      step_mode: Boolean(opts && opts.stepMode),
+    });
   }
 
   listJobs() {
@@ -247,6 +338,18 @@ export class RobotApi {
 
   getJob(jobId) {
     return this.get(`/api/jobs/${jobId}`);
+  }
+
+  pauseJob(jobId) {
+    return this.post(`/api/jobs/${jobId}/pause`);
+  }
+
+  resumeJob(jobId) {
+    return this.post(`/api/jobs/${jobId}/resume`);
+  }
+
+  stepJob(jobId) {
+    return this.post(`/api/jobs/${jobId}/step`);
   }
 
   retryJob(jobId, dryRun = false) {

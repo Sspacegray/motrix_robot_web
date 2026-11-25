@@ -196,6 +196,7 @@ def test_navigation_api_lifecycle(client):
 
 
 def test_perception_api_lifecycle(client):
+    client.post("/api/robots/r1pro-mock/lease/acquire", json={"confirm_safety": True})
     # 1. Toggle depth ready first
     res = client.post("/api/robots/r1pro-mock/perception/set_head_depth", json={"enabled": True})
     assert res.status_code == 200

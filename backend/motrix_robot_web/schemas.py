@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+import re
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 RobotMode = Literal["mock", "sim", "real"]
-ConnectorType = Literal["mock", "edge", "r1pro", "piper_lelab", "dex_w1"]
+ConnectorType = Literal["mock", "edge", "ros2_bridge", "r1pro", "piper_lelab", "dex_w1", "http_bridge"]
 TaskPermission = Literal["viewer", "operator", "admin"]
 NavMode = Literal["MANUAL", "SWITCHING", "NAVIGATION", "FAULT"]
-JobState = Literal["Pending", "Running", "Succeeded", "Failed", "Canceled"]
+JobState = Literal["Pending", "Running", "Paused", "Succeeded", "Failed", "Canceled"]
 JobKind = Literal["Manual", "Workflow", "Eval", "Inference", "Calibration"]
 EvalStatus = Literal["passed", "failed", "zero_success", "no_result", "unknown"]
 
@@ -22,6 +23,9 @@ class JointSpec(BaseModel):
     default: float = 0.0
     is_gripper: bool = False
     urdf_joint: str | None = None
+    urdf_scale: float = 1.0
+    sign: float = 1.0
+    zero_offset: float = 0.0
     max_step_rad: float = 0.15
 
 
@@ -54,22 +58,80 @@ class RobotCapabilities(BaseModel):
     loop_registry: bool = True
 
 
+class ModelTrailLinkSpec(BaseModel):
+    name: str
+    color: str = "#00f0ff"
+    light_color: str = "#0284c7"
+    label: str = ""
+
+
+class ModelProfile(BaseModel):
+    label: str
+    format_label: str = "URDF"
+    url: str
+    visual_count: int = 0
+    embedded_images: int = 0
+    preserve_gltf_pbr: bool = False
+    pbr_profile: str | None = None
+    default_view_dir: list[float] = Field(default_factory=lambda: [1.3, 0.65, 1.35])
+    trail_links: list[ModelTrailLinkSpec] = Field(default_factory=list)
+    hands: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class KinematicsArmSpec(BaseModel):
+    tip: str
+    group: str
+
+
+class KinematicsProfile(BaseModel):
+    base_frame: str = "base_link"
+    arms: dict[str, KinematicsArmSpec] = Field(default_factory=dict)
+    trail_links: list[str] = Field(default_factory=list)
+
+
+class Ros2BridgeConfig(BaseModel):
+    ws_url: str = "ws://127.0.0.1:9090"
+    ros_domain_id: int | None = None
+    joint_states_topic: str = "/joint_states"
+    odom_topic: str = "/odom"
+    battery_topic: str = "/battery_state"
+    joint_cmd_topic: str = "/joint_commands"
+    joint_cmd_type: Literal["sensor_msgs/msg/JointState", "trajectory_msgs/msg/JointTrajectory"] = "sensor_msgs/msg/JointState"
+    cmd_vel_topic: str = "/cmd_vel"
+    nav_goal_topic: str = "/goal_pose"
+
+
 class RobotDescriptor(BaseModel):
     id: str
     name: str
-    robot_type: Literal["r1pro", "piper_dual", "dexforce_w1"]
+    robot_type: str
     mode: RobotMode = "mock"
+    integration_status: Literal["mock", "live", "unimplemented"] = "mock"
     connector_type: ConnectorType = "mock"
     readonly_only: bool = False
+    is_custom: bool = False
+    endpoint: str = ""
+    ros2_config: Ros2BridgeConfig | None = None
     arms_scope: list[str] = Field(default_factory=lambda: ["left", "right"])
     urdf_url: str | None = None
     map_image_url: str | None = None
     map_yaml: dict[str, Any] | None = None
+    model_profile: ModelProfile | None = None
+    kinematics: KinematicsProfile | None = None
+    extra_maps: list[dict[str, Any]] = Field(default_factory=list)
     network_note: str = ""
     safety_note: str = ""
     joints: list[JointSpec]
     cameras: list[CameraSpec]
     capabilities: RobotCapabilities
+
+    @field_validator("robot_type")
+    @classmethod
+    def _validate_robot_type(cls, v: str) -> str:
+        s = str(v).strip().lower()
+        if not re.match(r"^[a-z0-9][a-z0-9_-]{1,47}$", s):
+            raise ValueError("robot_type must be 2-48 lowercase alphanumeric/underscore/hyphen characters")
+        return s
 
 
 class MotorDiag(BaseModel):
@@ -177,6 +239,7 @@ class PolicyState(BaseModel):
 
 
 class ObservationSnapshot(BaseModel):
+    telemetry_source: Literal["mock", "ros2_bridge", "unavailable"] = "mock"
     robot_id: str
     timestamp: float
     connected: bool = True
@@ -250,6 +313,12 @@ class WorkflowStep(BaseModel):
     delay_s: float = 0.0
     duration_s: float = 1.5
     overrides: dict[str, Any] = Field(default_factory=dict)
+    timeout_s: float = 15.0
+    settle_tol_rad: float = 0.025
+    nav_tol_m: float = 0.08
+    ik_max_err_mm: float = 15.0
+    wait_for_arrival: bool = True
+    pause_after: bool = False
 
 
 class WorkflowDefinition(BaseModel):
@@ -265,7 +334,7 @@ class WorkflowDefinition(BaseModel):
 
 class JobStep(BaseModel):
     step: str
-    phase: Literal["pending", "running", "succeeded", "failed", "canceled"] = "pending"
+    phase: Literal["pending", "running", "paused", "succeeded", "failed", "canceled"] = "pending"
     detail: str = ""
     started_at: str | None = None
     finished_at: str | None = None
@@ -286,6 +355,10 @@ class ExecutionJob(BaseModel):
     pipeline_sha: str = "motrix-hl-v1-a4f92c1"
     operator: str = "operator@motphys"
     lease_id: str | None = None
+    step_mode: bool = False
+    paused_reason: str = ""
+    current_step_index: int = 0
+    workflow_context: dict[str, Any] = Field(default_factory=dict)
     steps: list[JobStep] = Field(default_factory=list)
     logs: list[str] = Field(default_factory=list)
 
@@ -317,32 +390,77 @@ class LeaseRequest(BaseModel):
 
 
 class JointTargetsRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     targets: dict[str, float]
     speed_scale: float = 0.4
-    duration_s: float = 1.2
+    duration_s: float = Field(default=1.2, gt=0, le=30)
 
 
 class EEStepRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     arm: Literal["left", "right"] = "left"
-    dx: float = 0.0
-    dy: float = 0.0
-    dz: float = 0.0
-    droll_deg: float = 0.0
-    dpitch_deg: float = 0.0
-    dyaw_deg: float = 0.0
+    dx: float = Field(default=0.0, ge=-0.25, le=0.25)
+    dy: float = Field(default=0.0, ge=-0.25, le=0.25)
+    dz: float = Field(default=0.0, ge=-0.25, le=0.25)
+    droll_deg: float = Field(default=0.0, ge=-45.0, le=45.0)
+    dpitch_deg: float = Field(default=0.0, ge=-45.0, le=45.0)
+    dyaw_deg: float = Field(default=0.0, ge=-45.0, le=45.0)
 
 
 class ChassisVelRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     vx: float = 0.0
     vy: float = 0.0
     omega: float = 0.0
-    duration_s: float = 0.4
+    duration_s: float = Field(default=0.4, gt=0, le=3)
 
 
 class NavGoalRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     x: float
     y: float
     yaw: float = 0.0
+
+
+class NavWaypoint(BaseModel):
+    id: str
+    robot_id: str
+    map_id: str = "r1pro_20260918"
+    name: str
+    x: float
+    y: float
+    yaw: float = 0.0
+    note: str = ""
+    created_at: str = ""
+
+
+class KinematicsFKRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    joints: dict[str, float] | None = None
+    arm: Literal["left", "right"] | None = None
+
+
+class KinematicsIKRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    arm: Literal["left", "right"] = "left"
+    xyz_m: list[float] | None = None
+    rpy_deg: list[float] | None = None
+    delta_xyz_m: list[float] | None = None
+    delta_rpy_deg: list[float] | None = None
+    seed_joints: dict[str, float] | None = None
+    position_only: bool = False
+    plan_trajectory: bool = True
+    waypoints: int = Field(default=12, ge=4, le=32)
+    duration_s: float = Field(default=1.4, gt=0.1, le=20.0)
+    max_vel: float = Field(default=1.2, gt=0.05, le=3.5)
+
+
+class TrajectoryPlanRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    targets: dict[str, float]
+    start_joints: dict[str, float] | None = None
+    max_vel: float = Field(default=1.2, gt=0.05, le=3.5)
+    duration_s: float | None = Field(default=None, gt=0.1, le=30.0)
 
 
 class EstopRequest(BaseModel):

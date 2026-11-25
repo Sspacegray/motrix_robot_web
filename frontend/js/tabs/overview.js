@@ -1,15 +1,17 @@
 // Tab 1: Overview
 import { api } from "../api.js";
 import { drawer } from "../drawer.js";
+import { escapeHtml, formatLocalTime } from "../ui-format.js";
 
 export function initOverviewTab(container) {
   container.innerHTML = `
+    <div class="workspace-heading"><div><div class="eyebrow" id="overviewEyebrow">ROBOT WORKSPACE / LOCAL PREVIEW</div><h1>机器人工作台</h1><p id="overviewSubtitle">观察状态、编排任务和验证安全流程。所有数值与执行结果均来自本地 Mock。</p></div><span class="workspace-readonly" id="overviewWorkspaceBadge">默认只读 · 本地 Mock</span></div>
     <!-- Top KPI Cards -->
     <div class="grid-4" style="margin-bottom: 20px;">
       <div class="kpi-card">
         <div class="kpi-label">连接与反馈</div>
         <div class="kpi-val" id="kpiConn">-- <span class="kpi-sub" id="kpiAge">-- ms</span></div>
-        <div class="kpi-sub" id="kpiHz">-- Hz · DDS/CAN</div>
+        <div class="kpi-sub" id="kpiHz">-- Hz · 本地合成数据</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">底层租约 (Lease)</div>
@@ -31,15 +33,16 @@ export function initOverviewTab(container) {
     <!-- Architecture & Network Scope Banner -->
     <div class="card" style="border-left: 4px solid var(--accent);">
       <div class="card-header" style="margin-bottom:8px; padding-bottom:6px;">
-        <span class="card-title">高层控制与感知架构对齐（对齐路线图规范）</span>
+        <span class="card-title">连接范围与安全边界</span>
         <span class="badge badge-passed" id="overviewConnectorBadge">Connector: mock</span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:8px;" id="overviewNetworkNote">
         加载网络与架构拓扑说明...
       </p>
-      <div style="font-size:12px; color:#64748b; background:var(--bg-subtle); padding:8px 12px; border-radius:var(--radius-sm);" id="overviewSafetyNote">
+      <div style="font-size:12px; color:#64748b; background:var(--bg-subtle); padding:8px 12px; border-radius:var(--radius-sm); margin-bottom:10px;" id="overviewSafetyNote">
         安全原则：高层任务权限与底层租约解耦；统一平台不自建控制底座；Piper 唯一 CAN 写者归 Edge，严禁双写。
       </div>
+      <div id="overviewCapsStrip" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
     </div>
 
     <!-- Recent Execution Jobs (Motphys Loop Layout) -->
@@ -80,19 +83,34 @@ export function initOverviewTab(container) {
       const auth = state.authority || {};
       const desc = state.descriptor || {};
 
+      // Dynamic workspace header disclosure (truthful for Mock vs ROS 2 Bridge vs Unavailable)
+      const ovSub = container.querySelector("#overviewSubtitle");
+      const ovBadge = container.querySelector("#overviewWorkspaceBadge");
+      const ovEye = container.querySelector("#overviewEyebrow");
+      const isRos2 = desc.connector_type === "ros2_bridge";
+      if (ovEye) ovEye.textContent = isRos2 ? "ROBOT WORKSPACE / ROS 2 BRIDGE" : "ROBOT WORKSPACE / LOCAL PREVIEW";
+      if (ovSub) {
+        ovSub.textContent = isRos2
+          ? `当前机型通过 ROS 2 WebSocket Bridge (${desc.endpoint || "rosbridge"}) 接入；遥测来自实时话题，不加载本机 rclpy 驱动。`
+          : "观察状态、编排任务和验证安全流程。当前机型数值与执行结果均来自本地 Mock 仿真。";
+      }
+      if (ovBadge) {
+        ovBadge.textContent = isRos2
+          ? (desc.readonly_only ? "ROS 2 只读镜像 · 禁止反向写" : "ROS 2 受控连接 · 需 Lease")
+          : "默认只读 · 本地 Mock";
+      }
+
       // KPI 1: Connection & Age
       const connEl = container.querySelector("#kpiConn");
-      const ageEl = container.querySelector("#kpiAge");
       const hzEl = container.querySelector("#kpiHz");
-      if (connEl && ageEl && hzEl) {
+      if (connEl && hzEl) {
         if (obs.connected) {
-          connEl.innerHTML = `<span style="color:var(--success);">Connected</span>`;
-          ageEl.textContent = `${obs.feedback_age_ms || 18} ms`;
-          hzEl.textContent = `${obs.measured_hz || 30} Hz · ${String(desc.connector_type || "mock").toUpperCase()}`;
+          const onlineLabel = isRos2 ? "ROS 2 在线" : "Mock 在线";
+          connEl.innerHTML = `<span style="color:var(--accent);">${onlineLabel}</span> <span class="kpi-sub">${obs.feedback_age_ms ?? "—"} ms</span>`;
+          hzEl.textContent = `${obs.measured_hz ?? 0} Hz · ${String(desc.connector_type || "mock").toUpperCase()}`;
         } else {
-          connEl.innerHTML = `<span style="color:var(--danger);">Disconnected</span>`;
-          ageEl.textContent = `${obs.feedback_age_ms || 2400} ms`;
-          hzEl.textContent = `0 Hz`;
+          connEl.innerHTML = `<span style="color:var(--text-muted);">未连接</span>`;
+          hzEl.textContent = `0 Hz · ${String(desc.connector_type || "offline").toUpperCase()}`;
         }
       }
 
@@ -113,8 +131,8 @@ export function initOverviewTab(container) {
       const bat = obs.battery || {};
       const kpiBat = container.querySelector("#kpiBattery");
       const kpiPow = container.querySelector("#kpiPower");
-      if (kpiBat) kpiBat.textContent = `${bat.percentage || 88} %`;
-      if (kpiPow) kpiPow.textContent = `${bat.voltage_v || 48.2} V · ${bat.current_a || -2.4} A`;
+      if (kpiBat) kpiBat.textContent = `${obs.connected ? (bat.percentage ?? "—") : "—"} %`;
+      if (kpiPow) kpiPow.textContent = `${obs.connected ? (bat.voltage_v ?? "—") : "—"} V · ${obs.connected ? (bat.current_a ?? "—") : "—"} A`;
 
       // KPI 4: Motors
       const motors = obs.motors || [];
@@ -126,6 +144,8 @@ export function initOverviewTab(container) {
           motorStatusEl.innerHTML = `<span style="color:var(--danger);">${blocks.length} 轴阻断</span>`;
         } else if (warns.length > 0) {
           motorStatusEl.innerHTML = `<span style="color:var(--warning);">${warns.length} 轴告警</span>`;
+        } else if (!obs.connected || !motors.length) {
+          motorStatusEl.textContent = "无遥测";
         } else {
           motorStatusEl.innerHTML = `<span style="color:var(--success);">全部正常</span>`;
         }
@@ -133,7 +153,7 @@ export function initOverviewTab(container) {
       const kpiInterlocks = container.querySelector("#kpiInterlocks");
       if (kpiInterlocks) kpiInterlocks.textContent = `${blocks.length} 个阻断 · ${warns.length} 个告警 · ${motors.length} 轴`;
 
-      // Notes
+      // Notes & Capabilities Matrix
       const badgeEl = container.querySelector("#overviewConnectorBadge");
       if (badgeEl) badgeEl.textContent = `Connector: ${desc.connector_type || "mock"} (${desc.mode || "mock"})`;
       const netNote = container.querySelector("#overviewNetworkNote");
@@ -141,18 +161,40 @@ export function initOverviewTab(container) {
       const safeNote = container.querySelector("#overviewSafetyNote");
       if (safeNote) safeNote.textContent = desc.safety_note || "安全原则受控下发";
 
+      const capsStrip = container.querySelector("#overviewCapsStrip");
+      if (capsStrip && desc.capabilities) {
+        const capLabels = [
+          ["joints", "关节控制"],
+          ["urdf_3d", "本地真实 URDF"],
+          ["motrix_mirror", "Motrix 只读桥"],
+          ["ee_6d", "末端 6D 点动"],
+          ["navigation", "2D/3D 导航地图"],
+          ["cameras", "多相机观测"],
+          ["head_depth", "头部深度"],
+          ["yolo_foundation_pose", "YOLO+6D 感知"],
+          ["aruco", "ArUco 对齐"],
+          ["policy_inference", "策略推理切模"],
+          ["piper_safety_wizard", "Piper 6步向导"],
+          ["loop_registry", "Loop 台账"],
+        ];
+        capsStrip.innerHTML = capLabels.map(([k, lbl]) => {
+          const on = !!desc.capabilities[k];
+          return `<span class="cap-chip ${on ? "" : "cap-chip-off"}">${on ? "✓" : "–"} ${escapeHtml(lbl)}</span>`;
+        }).join("");
+      }
+
       // Recent Jobs Table
       const jobsBody = container.querySelector("#overviewJobsBody");
       const recent = state.recent_jobs || [];
       if (recent.length > 0) {
         jobsBody.innerHTML = recent.map(j => `
-          <tr data-job-id="${j.job_id}">
-            <td><span class="badge badge-${j.state.toLowerCase()}">${j.state}</span></td>
-            <td><span style="font-weight:600; color:var(--text-muted);">${j.kind}</span></td>
-            <td style="font-weight:600;">${j.flow_name}</td>
-            <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">${j.run_id}</td>
-            <td style="font-size:12px; color:var(--text-muted);">${j.created_at ? j.created_at.slice(11, 19) : "--"}</td>
-            <td style="font-size:12px;">${j.operator || "--"}</td>
+          <tr data-job-id="${escapeHtml(j.job_id)}">
+            <td><span class="badge badge-${escapeHtml(j.state.toLowerCase())}">${escapeHtml(j.state)}</span></td>
+            <td><span style="font-weight:600; color:var(--text-muted);">${escapeHtml(j.kind)}</span></td>
+            <td style="font-weight:600;">${escapeHtml(j.flow_name)}</td>
+            <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">${escapeHtml(j.run_id)}</td>
+            <td style="font-size:12px; color:var(--text-muted);">${formatLocalTime(j.created_at)}</td>
+            <td style="font-size:12px;">${escapeHtml(j.operator || "--")}</td>
           </tr>
         `).join("");
 
