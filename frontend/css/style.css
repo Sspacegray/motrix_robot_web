@@ -144,6 +144,11 @@ body {
   color: #b91c1c;
   border-color: #fecaca;
 }
+.pill-online {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
 .pill-sim {
   background: #eff6ff;
   color: #1d4ed8;

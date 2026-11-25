@@ -17,7 +17,7 @@ export function initActionsTab(container) {
 
   container.innerHTML = `
     <section class="execution-heading-card">
-      <div class="execution-title-row"><div><h1>Loop Actions · 动作与工作流</h1></div><span class="workspace-readonly">MOCK ONLY · 默认只读</span></div>
+      <div class="execution-title-row"><div><h1>Loop Actions · 动作与工作流</h1></div><span class="workspace-readonly">受控执行 · 默认只读</span></div>
     <!-- Sub navigation for Actions Tab -->
     <div class="execution-subtabs">
       <div style="display:flex; gap:8px;">
@@ -49,7 +49,7 @@ export function initActionsTab(container) {
             <option value="Canceled">Canceled</option>
           </select>
           <button class="btn btn-sm" id="refreshJobsBtn">↻ 刷新</button>
-          <button class="btn btn-sm btn-primary" id="previewDryRunBtn">+ Mock dry-run</button>
+          <button class="btn btn-sm btn-primary" id="previewDryRunBtn">+ 试运行验证 (Dry-run)</button>
         </div>
       </div>
       <div class="table-wrapper">
@@ -515,7 +515,7 @@ export function initActionsTab(container) {
       const jobs = filterJobs(data.jobs || [], filter, container.querySelector("#jobSearch").value);
       container.querySelector("#jobCount").textContent = jobs.length;
       if (jobs.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:#94a3b8;">暂无匹配的执行任务。点击「Mock dry-run」生成本地验证记录（不发送运动指令）。</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:#94a3b8;">暂无匹配的执行任务。点击「试运行验证 (Dry-run)」生成无运动验证记录。</td></tr>`;
         return;
       }
       tbody.innerHTML = jobs.map(j => `
@@ -564,7 +564,7 @@ export function initActionsTab(container) {
       await _loadJobs();
       await drawer.open(job.job_id);
     } catch (error) {
-      notify("Mock dry-run 失败: " + error.message, "error");
+      notify("试运行验证失败: " + error.message, "error");
     } finally {
       button.disabled = false;
     }

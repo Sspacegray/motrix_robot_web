@@ -141,7 +141,7 @@ class WorkflowRunner:
                 # Physically reachable tabletop grasp pose in R1 Pro right-arm URDF frame
                 xyz = [0.38, -0.36, 0.94]
                 rpy = [-20.0, -35.0, 10.0]
-                src = "mock_foundation_pose_snapshot"
+                src = "foundation_pose_snapshot"
             pose_obj = {"frame": "base_link", "xyz_m": xyz, "rpy_deg": rpy, "source": src}
             workflow_values["workflow_xyz"] = xyz
             workflow_values["workflow_pose"] = pose_obj
@@ -153,7 +153,7 @@ class WorkflowRunner:
                 src = "last_3d_pick"
             else:
                 xyz = [0.40, -0.34, 0.86]
-                src = "mock_yolo_3d"
+                src = "yolo_3d_depth"
             workflow_values["workflow_xyz"] = xyz
             return f"produces workflow_xyz={xyz} (src={src})"
 

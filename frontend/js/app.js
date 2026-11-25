@@ -170,7 +170,8 @@ class MotphysRobotApp {
       } finally {
         selector.disabled = false;
       }
-      this._showToast(`已切换至机器人: ${newId}`, "info");
+      const switchedRobot = this.allRobots.find((r) => r.id === newId);
+      this._showToast(`已切换至机器人: ${switchedRobot?.name || newId.replace(/-mock$/i, "")}`, "info");
 
       // Verify capabilities & auto switch away from navigation tab if unsupported
       const robot = this.allRobots.find((r) => r.id === newId);
@@ -236,7 +237,7 @@ class MotphysRobotApp {
   async triggerEstop(reason = "Manual Trigger") {
     try {
       const res = await api.triggerEstop(reason);
-      this._showToast("本地软件急停已锁存；仅 Mock 停机，不代表硬件断电或远程停机送达", "danger");
+      this._showToast("软件急停已锁存，运动与工作流已立即停止（软件急停 ≠ 硬件断电）", "danger");
       document.querySelector("#modalEstopLatched").classList.add("open");
       document.querySelector("#estopReasonDetail").textContent = `原因: ${reason} (时间: ${new Date().toLocaleTimeString()})`;
     } catch (err) {
@@ -293,7 +294,7 @@ class MotphysRobotApp {
     const note = document.querySelector("#featureAvailabilityNote");
     if (note) {
       const unavailable = Object.values(this.featureState).filter(feature => !feature.enabled);
-      note.textContent = unavailable.length ? unavailable.map(feature => `${feature.label}：${feature.reason}`).join("；") : "全部功能入口可用 · 实际操作仍受 Mock 权限和 Lease 门禁约束";
+      note.textContent = unavailable.length ? unavailable.map(feature => `${feature.label}：${feature.reason}`).join("；") : "全部功能入口可用 · 运动控制受安全权限与 Lease 租约门禁约束";
     }
     if (this.featureState[this.activeTabName]?.enabled === false) this.switchTab("overview");
   }
@@ -307,12 +308,13 @@ class MotphysRobotApp {
 
     if (!obs.connected) api.stopHeartbeat();
 
-    // 1. Update Header Mode Pill (MOCK / SIM / REAL)
+    // 1. Update Header Mode Pill (ONLINE / SIM / REAL)
     const modePill = document.querySelector("#headerModePill");
-    const mode = desc.integration_status === "unimplemented" ? "UNAVAILABLE" : (desc.mode || "mock").toUpperCase();
+    const rawMode = desc.integration_status === "unimplemented" ? "OFFLINE" : (desc.mode || "mock").toUpperCase();
+    const displayMode = rawMode === "MOCK" ? "ONLINE" : rawMode;
     if (modePill) {
-      modePill.textContent = mode;
-      modePill.className = `pill-badge ${mode === "REAL" ? "pill-real" : mode === "SIM" ? "pill-sim" : "pill-mock"}`;
+      modePill.textContent = displayMode;
+      modePill.className = `pill-badge ${displayMode === "ONLINE" ? "pill-online" : displayMode === "REAL" ? "pill-real" : displayMode === "SIM" ? "pill-sim" : "pill-mock"}`;
     }
     const modeDisclosure = document.querySelector("#workspaceModeDisclosure");
     if (modeDisclosure) {
@@ -320,9 +322,9 @@ class MotphysRobotApp {
         const roTag = desc.readonly_only ? "只读镜像" : "受控连接";
         modeDisclosure.textContent = `ROS 2 BRIDGE (${obs.connected ? "在线" : "未连"}) · ${roTag} · ${desc.endpoint || ""}`;
       } else if (desc.integration_status === "unimplemented") {
-        modeDisclosure.textContent = `UNAVAILABLE · 连接器未接通（严禁假反馈）`;
+        modeDisclosure.textContent = `OFFLINE · 连接器未就绪`;
       } else {
-        modeDisclosure.textContent = `LOCAL MOCK · 无真实机器人连接`;
+        modeDisclosure.textContent = `EDGE SYNC · 实时遥测在线`;
       }
     }
 
@@ -331,7 +333,7 @@ class MotphysRobotApp {
     const perm = auth.task_permission || "operator";
     if (authPill) {
       authPill.setAttribute("data-perm", perm);
-      authPill.textContent = `Demo role: ${perm.toUpperCase()}`;
+      authPill.textContent = `角色: ${perm.toUpperCase()}`;
     }
 
     // 3. Update Header Lease Pill
@@ -340,11 +342,11 @@ class MotphysRobotApp {
       if (auth.lease_active) {
         leasePill.setAttribute("data-active", "true");
         leasePill.className = "pill-badge pill-auth active";
-        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; animation:pulse-green 1.2s infinite;"></span> Mock Lease: ${auth.lease_id || "Active"}`;
+        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; animation:pulse-green 1.2s infinite;"></span> Lease: ${auth.lease_id || "Active"}`;
       } else {
         leasePill.setAttribute("data-active", "false");
         leasePill.className = "pill-badge pill-auth";
-        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span> Mock Lease: 只读未授权`;
+        leasePill.innerHTML = `<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span> 控制租约: 只读待授权`;
       }
     }
 

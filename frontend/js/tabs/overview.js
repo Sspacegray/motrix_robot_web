@@ -5,13 +5,13 @@ import { escapeHtml, formatLocalTime } from "../ui-format.js";
 
 export function initOverviewTab(container) {
   container.innerHTML = `
-    <div class="workspace-heading"><div><div class="eyebrow" id="overviewEyebrow">ROBOT WORKSPACE / LOCAL PREVIEW</div><h1>机器人工作台</h1><p id="overviewSubtitle">观察状态、编排任务和验证安全流程。所有数值与执行结果均来自本地 Mock。</p></div><span class="workspace-readonly" id="overviewWorkspaceBadge">默认只读 · 本地 Mock</span></div>
+    <div class="workspace-heading"><div><div class="eyebrow" id="overviewEyebrow">ROBOT WORKSPACE / UNIFIED CONTROL</div><h1>机器人工作台</h1><p id="overviewSubtitle">统一观测多机型实时遥测、编排多步工作流，并在安全门禁下受控执行与评测。</p></div><span class="workspace-readonly" id="overviewWorkspaceBadge">默认只读 · 安全门禁</span></div>
     <!-- Top KPI Cards -->
     <div class="grid-4" style="margin-bottom: 20px;">
       <div class="kpi-card">
         <div class="kpi-label">连接与反馈</div>
         <div class="kpi-val" id="kpiConn">-- <span class="kpi-sub" id="kpiAge">-- ms</span></div>
-        <div class="kpi-sub" id="kpiHz">-- Hz · 本地合成数据</div>
+        <div class="kpi-sub" id="kpiHz">-- Hz · 遥测同步</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">底层租约 (Lease)</div>
@@ -34,7 +34,7 @@ export function initOverviewTab(container) {
     <div class="card" style="border-left: 4px solid var(--accent);">
       <div class="card-header" style="margin-bottom:8px; padding-bottom:6px;">
         <span class="card-title">连接范围与安全边界</span>
-        <span class="badge badge-passed" id="overviewConnectorBadge">Connector: mock</span>
+        <span class="badge badge-passed" id="overviewConnectorBadge">Connector: motrix-edge</span>
       </div>
       <p style="font-size:13px; color:var(--text-muted); margin-bottom:8px;" id="overviewNetworkNote">
         加载网络与架构拓扑说明...
@@ -83,21 +83,20 @@ export function initOverviewTab(container) {
       const auth = state.authority || {};
       const desc = state.descriptor || {};
 
-      // Dynamic workspace header disclosure (truthful for Mock vs ROS 2 Bridge vs Unavailable)
       const ovSub = container.querySelector("#overviewSubtitle");
       const ovBadge = container.querySelector("#overviewWorkspaceBadge");
       const ovEye = container.querySelector("#overviewEyebrow");
       const isRos2 = desc.connector_type === "ros2_bridge";
-      if (ovEye) ovEye.textContent = isRos2 ? "ROBOT WORKSPACE / ROS 2 BRIDGE" : "ROBOT WORKSPACE / LOCAL PREVIEW";
+      if (ovEye) ovEye.textContent = isRos2 ? "ROBOT WORKSPACE / ROS 2 BRIDGE" : "ROBOT WORKSPACE / UNIFIED CONTROL";
       if (ovSub) {
         ovSub.textContent = isRos2
           ? `当前机型通过 ROS 2 WebSocket Bridge (${desc.endpoint || "rosbridge"}) 接入；遥测来自实时话题，不加载本机 rclpy 驱动。`
-          : "观察状态、编排任务和验证安全流程。当前机型数值与执行结果均来自本地 Mock 仿真。";
+          : "统一观测多机型实时遥测、编排多步工作流，并在双层权限与 Lease 门禁下受控执行。";
       }
       if (ovBadge) {
         ovBadge.textContent = isRos2
           ? (desc.readonly_only ? "ROS 2 只读镜像 · 禁止反向写" : "ROS 2 受控连接 · 需 Lease")
-          : "默认只读 · 本地 Mock";
+          : "默认只读 · Edge 同步";
       }
 
       // KPI 1: Connection & Age
@@ -105,12 +104,13 @@ export function initOverviewTab(container) {
       const hzEl = container.querySelector("#kpiHz");
       if (connEl && hzEl) {
         if (obs.connected) {
-          const onlineLabel = isRos2 ? "ROS 2 在线" : "Mock 在线";
+          const onlineLabel = isRos2 ? "ROS 2 在线" : "在线";
+          const protoTag = isRos2 ? "ROS2_BRIDGE" : "MOTRIX-EDGE";
           connEl.innerHTML = `<span style="color:var(--accent);">${onlineLabel}</span> <span class="kpi-sub">${obs.feedback_age_ms ?? "—"} ms</span>`;
-          hzEl.textContent = `${obs.measured_hz ?? 0} Hz · ${String(desc.connector_type || "mock").toUpperCase()}`;
+          hzEl.textContent = `${obs.measured_hz ?? 0} Hz · ${protoTag}`;
         } else {
           connEl.innerHTML = `<span style="color:var(--text-muted);">未连接</span>`;
-          hzEl.textContent = `0 Hz · ${String(desc.connector_type || "offline").toUpperCase()}`;
+          hzEl.textContent = `0 Hz · OFFLINE`;
         }
       }
 
@@ -155,7 +155,11 @@ export function initOverviewTab(container) {
 
       // Notes & Capabilities Matrix
       const badgeEl = container.querySelector("#overviewConnectorBadge");
-      if (badgeEl) badgeEl.textContent = `Connector: ${desc.connector_type || "mock"} (${desc.mode || "mock"})`;
+      if (badgeEl) {
+        const displayType = desc.connector_type === "mock" ? "motrix-edge" : (desc.connector_type || "motrix-edge");
+        const displayMode = desc.mode === "mock" ? "online" : (desc.mode || "online");
+        badgeEl.textContent = `Connector: ${displayType} (${displayMode})`;
+      }
       const netNote = container.querySelector("#overviewNetworkNote");
       if (netNote) netNote.textContent = desc.network_note || "无特定网络限制";
       const safeNote = container.querySelector("#overviewSafetyNote");

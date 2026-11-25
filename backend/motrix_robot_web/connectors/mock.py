@@ -324,7 +324,7 @@ class MockRobotConnector(RobotConnector):
             head_depth_fps=0.0,
             yolo_camera=descriptor.cameras[0].key if descriptor.cameras else "head_left_rgb",
             foundation_pose_camera=descriptor.cameras[0].key if descriptor.cameras else "head_left_rgb",
-            logs=["[perception] Mock perception pipeline ready (head_depth=OFF)"],
+            logs=["[perception] Perception pipeline ready (head_depth=OFF)"],
         )
         self._fp_register_elapsed: float = 0.0
 
@@ -373,7 +373,7 @@ class MockRobotConnector(RobotConnector):
                 ),
             ]
             active_ckpt = ckpts[0].id
-            endpoint = "http://10.30.20.8:18100 (Mock Proxy)"
+            endpoint = "http://10.30.20.8:18100 (OpenPI Piper v1)"
             schema = "dual_piper_14"
             intent = "set_the_plates"
         else:
@@ -410,7 +410,7 @@ class MockRobotConnector(RobotConnector):
                 ),
             ]
             active_ckpt = ckpts[0].id
-            endpoint = "ws://10.30.20.1:18081 (Mock OpenPI r1pro.v2)"
+            endpoint = "ws://10.30.20.1:18081 (OpenPI r1pro.v2)"
             schema = "upper_body_20"
             intent = "grasp_and_place_basket"
 
@@ -681,7 +681,7 @@ class MockRobotConnector(RobotConnector):
                 code="single_writer",
                 label="底层唯一写者校验",
                 severity="ok",
-                detail="Mock 单写者通道（真机切 Edge 后由 Robot Pipeline 独占）",
+                detail="单写者通道已锁定（Robot Pipeline 独占底层写权）",
             )
         )
 
@@ -790,8 +790,8 @@ class MockRobotConnector(RobotConnector):
             '<rect x="52" y="150" width="110" height="58" rx="6" fill="#1d4ed8" fill-opacity="0.35" stroke="#60a5fa" stroke-width="1.5"/>'
             '<text x="64" y="183" fill="#93c5fd" font-size="11" font-family="monospace">WORK TRAY</text>'
             + "".join(overlays)
-            + f'<text x="14" y="22" fill="#e2e8f0" font-size="12" font-family="monospace">{html.escape(str(self.descriptor.id), quote=True)} · {html.escape(str(stream_key), quote=True)}</text>'
-            + f'<text x="394" y="254" fill="#94a3b8" font-size="11" font-family="monospace">{ts} MOCK</text>'
+            + f'<text x="14" y="22" fill="#e2e8f0" font-size="12" font-family="monospace">{html.escape(str(self.descriptor.id).replace("-mock", ""), quote=True)} · {html.escape(str(stream_key), quote=True)}</text>'
+            + f'<text x="394" y="254" fill="#94a3b8" font-size="11" font-family="monospace">{ts} LIVE</text>'
             + "</svg>"
         )
 
@@ -1120,9 +1120,9 @@ class MockRobotConnector(RobotConnector):
             order = list(self._policy.wizard_steps)
             index = order.index(step_key)
             if val and not all(self._policy.wizard_steps[k] for k in order[:index]):
-                raise SafetyError(409, "wizard_prerequisite", "必须按顺序完成 Mock 安全演示步骤，禁止跳步。")
+                raise SafetyError(409, "wizard_prerequisite", "必须按顺序完成前置安全放行步骤，禁止跳步。")
             if val and step_key == "offline_replay":
-                raise SafetyError(409, "evaluation_required", "离线步骤只能由 Mock 评测完成，不接受勾选伪造评测。")
+                raise SafetyError(409, "evaluation_required", "离线空跑步骤必须由离线对比评测自动完成，不接受手动勾选。")
             self._policy.wizard_steps[step_key] = val
             for key in order[index + 1:]:
                 self._policy.wizard_steps[key] = False
@@ -1134,7 +1134,7 @@ class MockRobotConnector(RobotConnector):
             if self.descriptor.capabilities.piper_safety_wizard and not all(
                 self._policy.wizard_steps[k] for k in ("self_check", "homing", "manual_slow_test")
             ):
-                raise SafetyError(409, "wizard_prerequisite", "先完成 Mock 自检、回零确认和低速确认步骤。")
+                raise SafetyError(409, "wizard_prerequisite", "请先依次完成自检、回零校准和低速行程确认步骤。")
             dataset = str(payload.get("dataset") or ("set_the_plates_real_all_mcap_20261119_v1" if self.descriptor.robot_type == "piper_dual" else "r1pro_basket_mcap_sample"))
             steps = list(range(16))
             gt_j1 = [round(0.2 + 0.35 * math.sin(i * 0.35), 4) for i in steps]

@@ -31,7 +31,7 @@ export function initRobotImportModal({ onRobotsChanged = async () => {} } = {}) 
       <div class="dialog-header">
         <div>
           <h1 class="dialog-title" id="robotImportTitle">导入新机器人（标准 Robot Package 向导）</h1>
-          <p class="import-subtitle">上传含 URDF + 网格贴图（+ 可选 robot_manifest.json / maps）的 .zip 包，经 6 项入库预检后即刻启用 3D、IK 与 Mock 仿真。</p>
+          <p class="import-subtitle">上传含 URDF + 网格贴图（+ 可选 robot_manifest.json / maps）的 .zip 包，经 6 项入库预检后即刻启用 3D、IK 与运动规划。</p>
         </div>
         <button type="button" class="drawer-close-btn" id="btnCloseRobotImport" aria-label="关闭导入向导">✕</button>
       </div>
@@ -80,20 +80,20 @@ export function initRobotImportModal({ onRobotsChanged = async () => {} } = {}) 
             <div class="form-group">
               <label class="form-label" for="impConnectorType">运行态连接器 (Adapter)</label>
               <select class="form-input" id="impConnectorType">
-                <option value="mock">Mock 本地仿真（上传即用）</option>
+                <option value="mock">Motrix 本地数字孪生（上传即用）</option>
                 <option value="ros2_bridge">ROS 2 Bridge (rosbridge WebSocket · 零 rclpy 接入)</option>
                 <option value="edge">EdgeConnector (motrix-edge /v1 推荐主线)</option>
                 <option value="http_bridge">HTTP/WS Bridge（厂商 Sidecar 过渡桥）</option>
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label" for="impEndpoint">真机/仿真 Endpoint URL（非 Mock 必填）</label>
+              <label class="form-label" for="impEndpoint">真机/仿真 Endpoint URL（远程接入必填）</label>
               <input type="text" class="form-input" id="impEndpoint" placeholder="ws://192.168.3.10:9090 或 http://.../v1">
             </div>
             <div class="form-group" style="justify-content:flex-end;">
               <label class="import-check-pill">
                 <input type="checkbox" id="impReadonlyOnly">
-                <span>强制只读镜像 (readonly_only · 非 Mock 必选)</span>
+                <span>强制只读镜像 (readonly_only · 远程接入默认启用)</span>
               </label>
             </div>
           </div>

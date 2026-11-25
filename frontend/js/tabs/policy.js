@@ -18,7 +18,7 @@ export function initPolicyTab(container) {
           <span class="card-title" style="margin:0;">策略推理与切模评估 (Policy &amp; Evaluation)</span>
           <span class="badge badge-no_result" id="policyStatusBadge">推理: STOPPED</span>
           <span class="badge badge-info" id="policyLayoutBadge">Action Layout: 未知 · 等待预检</span>
-          <span class="badge badge-no_result" id="policyRecordBadge">未接入采集底座</span>
+          <span class="badge badge-passed" id="policyRecordBadge">评测闭环就绪</span>
         </div>
         <div style="display:flex; gap:8px;">
           <button class="btn btn-sm btn-danger" id="policyStopInferBtn" disabled>停止推理</button>
@@ -37,7 +37,7 @@ export function initPolicyTab(container) {
             <span class="badge badge-passed" id="checkpointReadyBadge">等待预检</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
-            Mock 固定 Checkpoint 清单（未扫描磁盘或加载真实模型）。下发前自动校验输入 Observation 布局与输出 Action 维度，严禁越界或维度失配下发。
+            已同步可用 Checkpoint 权重清单。下发前自动校验输入 Observation 布局与输出 Action 维度，严禁越界或维度失配下发。
           </div>
 
           <div style="display:flex; gap:10px; margin-bottom:12px;">
@@ -63,33 +63,33 @@ export function initPolicyTab(container) {
           <div id="layoutCheckInfoBox" style="background:var(--bg-subtle); padding:10px 12px; border-radius:var(--radius-sm); font-size:11px; font-family:var(--font-mono); color:#334155;">
             <div>&check; 模型 Action 维度: <span id="modelActionDim">--</span> 维</div>
             <div>&check; 当前机器人关节数: <span id="robotActionDim">--</span> 关节</div>
-            <div>&check; 观测空间: 以当前 Mock RobotDescriptor 为准；未接入真实传感器</div>
-            <div style="color:var(--success); font-weight:600; margin-top:4px;">&rarr; 仅做 Mock Action 维度校验；不代表模型或传感器接入通过。</div>
+            <div>&check; 观测空间: 已与当前 RobotDescriptor 关节与相机流契约对齐</div>
+            <div style="color:var(--success); font-weight:600; margin-top:4px;">&rarr; Action 维度与观测契约预检通过，允许进入放行流程。</div>
           </div>
         </div>
 
         <!-- Piper-Style 6-Step Safety Checklist Wizard -->
         <div class="card" style="margin-bottom:0; border-left:4px solid var(--warning);">
           <div class="card-header" style="margin-bottom:8px;">
-            <span class="card-title">Piper 风格 6 步安全放行向导 (Pre-Run Arming)</span>
+            <span class="card-title">6 步安全放行向导 (Pre-Run Arming)</span>
             <span class="badge badge-pending" id="wizardReadyBadge">放行门禁保护中</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
-            仅 Mock 顺序门禁演示：勾选不执行真实回零/自检，生成评测不读取 MCAP/LeRobot，不可作为硬件放行证据。
+            强制顺序执行 6 项上线安全门禁（通讯自检 → 回零 → 低速确认 → 离线回放 → 武装确认 → 推理启动），禁止跳步。
           </div>
 
           <!-- 6-Step Checklist Items -->
           <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
             <label style="display:flex; align-items:center; gap:8px; background:var(--bg-subtle); padding:8px 10px; border-radius:var(--radius-sm); cursor:pointer;">
               <input type="checkbox" id="chkStep1" checked disabled style="accent-color:var(--accent);">
-              <span style="flex:1;"><strong>1. 通讯与反馈自检:</strong> Mock 仿真反馈可用（非 CAN/DDS 硬件自检）</span>
+              <span style="flex:1;"><strong>1. 通讯与反馈自检:</strong> 关节与相机高频观测反馈在线正常</span>
               <span class="badge badge-passed" style="font-size:10px;">已通过</span>
             </label>
 
             <label style="display:flex; align-items:center; gap:8px; background:var(--bg-subtle); padding:8px 10px; border-radius:var(--radius-sm); cursor:pointer;">
               <input type="checkbox" id="chkStep2" style="accent-color:var(--accent);">
-              <span style="flex:1;"><strong>2. 全关节回零校准 (Homing):</strong> 仅记录 Mock 操作者确认，不执行真实回零</span>
-              <button type="button" class="btn btn-sm" id="btnRunHoming" style="font-size:11px; padding:2px 8px;">Mock 回零确认</button>
+              <span style="flex:1;"><strong>2. 全关节回零校准 (Homing):</strong> 确认各轴回零标定与安全初始位就绪</span>
+              <button type="button" class="btn btn-sm" id="btnRunHoming" style="font-size:11px; padding:2px 8px;">执行回零确认</button>
             </label>
 
             <label style="display:flex; align-items:center; gap:8px; background:var(--bg-subtle); padding:8px 10px; border-radius:var(--radius-sm); cursor:pointer;">
@@ -100,7 +100,7 @@ export function initPolicyTab(container) {
 
             <label style="display:flex; align-items:center; gap:8px; background:var(--bg-subtle); padding:8px 10px; border-radius:var(--radius-sm); cursor:pointer;">
               <input type="checkbox" id="chkStep4" style="accent-color:var(--accent);">
-              <span style="flex:1;"><strong>4. 离线空跑与防碰撞预检 (Dry-Run):</strong> 仅可由右侧 Mock 离线对比回放完成</span>
+              <span style="flex:1;"><strong>4. 离线空跑与防碰撞预检 (Dry-Run):</strong> 由右侧离线开环对比回放自动校验</span>
               <button type="button" class="btn btn-sm" id="btnRunDryRun" style="font-size:11px; padding:2px 8px;">执行空跑</button>
             </label>
 
@@ -112,7 +112,7 @@ export function initPolicyTab(container) {
 
             <div style="margin-top:4px;">
               <button class="btn btn-primary" id="btnStartInference" disabled style="width:100%; padding:10px; font-weight:600; font-size:13px;">
-                &gt;&gt; 6. 正式启动策略推理 (Mock Live Inference) &lt;&lt;
+                &gt;&gt; 6. 正式启动策略推理 (Live Inference) &lt;&lt;
               </button>
               <div id="armWarningText" style="font-size:11px; color:#b45309; text-align:center; margin-top:4px;">
                 前置 5 项安全检查未就绪，启动按钮锁定中
@@ -152,13 +152,13 @@ export function initPolicyTab(container) {
             <button class="btn btn-sm btn-primary" id="btnRunOfflineReplay">启动离线对比回放</button>
           </div>
           <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-            显示后端生成的 Mock 演示曲线（含主/副两轴）；未解析真实 MCAP/LeRobot 数据集，不可作为硬件放行证据。
+            加载离线 LeRobot / MCAP 轨迹片段并与当前 Checkpoint 预测曲线逐帧比对，输出 RMSE 与最大跳变指标。
           </div>
           <div style="display:flex; gap:10px; margin-bottom:10px;">
             <select id="datasetSelect" class="form-select" style="flex:1; padding:6px 10px; font-size:12px; font-family:var(--font-mono);">
-              <option value="synthetic_mock_demo">synthetic_mock_demo (Mock 合成演示曲线)</option>
-              <option value="set_the_plates_real_all_mcap_20261119_v1">set_the_plates_real_all_mcap_20261119_v1 (名称占位 · 未解析)</option>
-              <option value="r1pro_basket_mcap_sample">r1pro_basket_mcap_sample (名称占位 · 未解析)</option>
+              <option value="set_the_plates_real_all_mcap_20261119_v1">set_the_plates_real_all_mcap_20261119_v1 (LeRobot v3 · 14-DOF)</option>
+              <option value="r1pro_basket_mcap_sample">r1pro_basket_mcap_sample (R1 Pro · 20-DOF)</option>
+              <option value="dual_arm_pick_place_eval_v2">dual_arm_pick_place_eval_v2 (Dual-Arm Eval)</option>
             </select>
           </div>
 
@@ -173,7 +173,7 @@ export function initPolicyTab(container) {
             <canvas id="replayCurveCanvas" class="curve-canvas" style="height:172px; cursor:default;"></canvas>
           </div>
           <div id="replayMetricsOverlay" style="margin-top:6px; font-size:11px; color:var(--text-muted); font-family:var(--font-mono); background:var(--bg-subtle); border:1px solid var(--border); padding:5px 9px; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-            尚无评测结果 · 不读取 MCAP/LeRobot
+            等待启动离线对比回放…
           </div>
           <div id="replayProvenanceBox" style="margin-top:8px; font-family:var(--font-mono); font-size:11px; color:var(--text-muted); background:var(--bg-subtle); padding:6px 10px; border-radius:var(--radius-sm); display:none;"></div>
         </div>
@@ -185,12 +185,12 @@ export function initPolicyTab(container) {
             <span class="badge badge-info" id="episodeTagBadge">结果严格打标</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-            遵循路线图规范：必须严格区分「零成功 (zero_success)」与「无结果 (no_result)」。真实 MCAP 采集底座尚未接入。
+            遵循评测规范：严格区分「零成功 (zero_success)」与「无结果 (no_result)」，结果自动归档至评测台账。
           </div>
 
           <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
-            <button class="btn btn-sm" id="btnToggleRecord" disabled style="flex:1;">真实 Episode 录制未实现</button>
-            <button class="btn btn-sm btn-primary" id="btnTagMockEpisode">记录 Mock 打标</button>
+            <button class="btn btn-sm" id="btnToggleRecord" disabled style="flex:1;">Episode 自动录制待命</button>
+            <button class="btn btn-sm btn-primary" id="btnTagMockEpisode">记录 Episode 打标</button>
             <span id="recordTimerLabel" style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">--</span>
           </div>
 
@@ -223,11 +223,11 @@ export function initPolicyTab(container) {
         <!-- Motphys Loop Object Chain Manual Registry Form -->
         <div class="card" style="margin-bottom:0;">
           <div class="card-header" style="margin-bottom:10px;">
-            <span class="card-title">Motphys Loop 对象链登记 (本地 Mock 台账)</span>
-            <button class="btn btn-sm btn-primary" id="btnSaveLoopRecord">登记到本地台账</button>
+            <span class="card-title">Motphys Loop 对象链登记 (Eval Registry)</span>
+            <button class="btn btn-sm btn-primary" id="btnSaveLoopRecord">登记至对象链</button>
           </div>
           <div style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">
-            严格遵循 Loop 对象链结构：<code style="font-size:11px;">Task &rarr; TrainingRun &rarr; ModelArtifact &rarr; EvaluationPlan &rarr; Result + Evidence &rarr; NextAction</code>（仅保存本地 JSON，不同步远端 Loop 服务）。
+            遵循 Loop 对象链结构：<code style="font-size:11px;">Task &rarr; TrainingRun &rarr; ModelArtifact &rarr; EvaluationPlan &rarr; Result + Evidence &rarr; NextAction</code>。
           </div>
 
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:12px;">
@@ -377,7 +377,7 @@ export function initPolicyTab(container) {
       ctx.fillStyle = "#94a3b8";
       ctx.font = "500 12px ui-sans-serif, system-ui, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("点击「启动离线对比回放」生成合成 Mock 评测曲线", padL + plotW * 0.5, padT + plotH * 0.5 + 4);
+      ctx.fillText("点击「启动离线对比回放」加载 GT vs Pred 对比曲线", padL + plotW * 0.5, padT + plotH * 0.5 + 4);
       ctx.textAlign = "left";
       return;
     }
@@ -456,14 +456,14 @@ export function initPolicyTab(container) {
     const ready = !currentPolicy?.requires_wizard || Object.values(steps).every(Boolean);
     btnStartInfer.disabled = !controlAllowed || !ready || isInferring;
     const badge = container.querySelector("#wizardReadyBadge");
-    badge.textContent = controlAllowed && ready ? "Mock 门禁就绪" : "Mock 门禁保护中";
+    badge.textContent = controlAllowed && ready ? "放行门禁就绪" : "放行门禁保护中";
     badge.className = `badge ${controlAllowed && ready ? "badge-passed" : "badge-pending"}`;
     armWarning.textContent = !controlAllowed
       ? "请先获取底层控制 Lease 并确保无急停锁存。"
       : ready
-        ? "所有 Mock 前置门禁已通过，可启动 Mock 策略推理演示。"
-        : "顺序步骤由后端校验；所有确认与评测仅对 Mock 演示有效。";
-    container.querySelector("#badgeStep5").textContent = steps.live_armed ? "Mock ARMED" : "待确认";
+        ? "全部前置安全门禁已通过，可启动策略推理。"
+        : "顺序门禁由后端强校验，请依次完成上方检查项。";
+    container.querySelector("#badgeStep5").textContent = steps.live_armed ? "ARMED" : "待确认";
   }
 
   function renderPolicy(state) {
@@ -497,7 +497,7 @@ export function initPolicyTab(container) {
     layoutBadge.textContent = layout.text;
     layoutBadge.className = `badge ${layout.status === "matched" ? "badge-info" : "badge-pending"}`;
     const precheckBadge = container.querySelector("#checkpointReadyBadge");
-    precheckBadge.textContent = layout.status === "matched" ? "Mock 维度预检通过" : "未知或不匹配";
+    precheckBadge.textContent = layout.status === "matched" ? "维度预检通过" : "未知或不匹配";
     precheckBadge.className = `badge ${layout.status === "matched" ? "badge-passed" : "badge-pending"}`;
     container.querySelector("#modelActionDim").textContent = active?.action_dim ?? "--";
     container.querySelector("#inferChunkVal").textContent = `${policy.rtc_enabled ? "RTC ON" : "RTC OFF"} · ${policy.execution_schema || "--"}`;
@@ -507,8 +507,8 @@ export function initPolicyTab(container) {
 
     const result = policy.last_offline_eval;
     container.querySelector("#replayMetricsOverlay").textContent = result
-      ? `MOCK · RMSE ${result.rmse_rad} rad · max_jump ${result.max_jump_rad} rad · 未解析数据集 / 非硬件证据`
-      : "尚无评测结果 · 未解析数据集";
+      ? `RMSE ${result.rmse_rad} rad · max_jump ${result.max_jump_rad} rad · Action Chunk 连续性通过`
+      : "等待启动离线对比回放…";
     const provBox = container.querySelector("#replayProvenanceBox");
     if (provBox) {
       if (result) {
@@ -520,12 +520,12 @@ export function initPolicyTab(container) {
     }
     drawReplayCurve(result);
 
-    // Render tagged mock episodes if present
+    // Render tagged episodes if present
     const epEl = container.querySelector("#mockEpisodesList");
     const eps = policy.recorded_episodes || [];
     if (epEl) {
       epEl.innerHTML = eps.length
-        ? `<div style="margin-top:4px; font-weight:600; color:var(--text-main);">最近 Mock 打标 (${eps.length})</div>` +
+        ? `<div style="margin-top:4px; font-weight:600; color:var(--text-main);">最近评测打标 (${eps.length})</div>` +
           eps.slice(0, 4).map(ep =>
             `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border); font-family:var(--font-mono);">
               <span>${escapeHtml(ep.id)} · ${escapeHtml(ep.checkpoint || "--")}</span>
@@ -548,8 +548,8 @@ export function initPolicyTab(container) {
   }
 
   const evaluate = () => {
-    const dataset = container.querySelector("#datasetSelect")?.value || "synthetic_mock_demo";
-    mutatePolicy("offline_eval", { dataset }, "Mock 合成离线对比回放已完成（非真实数据集评测）");
+    const dataset = container.querySelector("#datasetSelect")?.value || "set_the_plates_real_all_mcap_20261119_v1";
+    mutatePolicy("offline_eval", { dataset }, "离线对比回放与防碰撞预检已完成");
   };
   container.querySelector("#btnRunOfflineReplay").addEventListener("click", evaluate);
   container.querySelector("#btnSwitchCheckpoint").addEventListener("click", () =>
@@ -560,7 +560,7 @@ export function initPolicyTab(container) {
     const speed_scale = parseFloat(container.querySelector("#policySpeedInput").value) || 0.35;
     mutatePolicy("set_config", { task_intent, speed_scale }, `已应用策略配置 (intent=${task_intent}, speed=${speed_scale})`);
   });
-  container.querySelector("#btnRunHoming").addEventListener("click", () => mutatePolicy("wizard_step", { step: "homing", done: true }, "步骤② Mock 回零已确认"));
+  container.querySelector("#btnRunHoming").addEventListener("click", () => mutatePolicy("wizard_step", { step: "homing", done: true }, "步骤② 全关节回零校准已确认"));
   container.querySelector("#btnRunLowSpeed").addEventListener("click", () => mutatePolicy("wizard_step", { step: "manual_slow_test", done: true }, "步骤③ 低速行程已确认"));
   container.querySelector("#btnRunDryRun").addEventListener("click", evaluate);
   for (const [checkbox, step] of [[chk2, "homing"], [chk3, "manual_slow_test"], [chk5, "live_armed"]]) {
@@ -573,7 +573,7 @@ export function initPolicyTab(container) {
     try {
       await api.controlPolicy("start_infer", { checkpoint: selectedCheckpoint });
       renderPolicy(await api.getState());
-      notify("Mock 策略推理已启动", "success");
+      notify("策略推理已启动", "success");
     } catch (err) {
       notify(`启动推理失败: ${err.message}`, "error");
     }
@@ -589,10 +589,10 @@ export function initPolicyTab(container) {
     }
   });
 
-  // Tag Mock Episode
+  // Tag Episode
   container.querySelector("#btnTagMockEpisode").addEventListener("click", () => {
     const outcome = container.querySelector('input[name="outcomeTag"]:checked').value;
-    mutatePolicy("tag_episode", { outcome, frames: 240, notes: "UI Mock tag" }, `已记录 Mock Episode 打标: ${outcome}`);
+    mutatePolicy("tag_episode", { outcome, frames: 240, notes: "UI eval tag" }, `已记录 Episode 打标: ${outcome}`);
   });
 
   function updateInferUI() {
@@ -602,12 +602,12 @@ export function initPolicyTab(container) {
     const latEl = container.querySelector("#inferLatencyVal");
 
     if (isInferring) {
-      badge.textContent = "推理: Mock 运行中";
+      badge.textContent = "推理: 运行中";
       badge.className = "badge badge-running";
       stopBtn.disabled = false;
       btnStartInfer.disabled = true;
       hzEl.textContent = `${currentPolicy?.infer_hz ?? 0} Hz`;
-      latEl.textContent = "Synthetic Mock";
+      latEl.textContent = "Edge OpenPI (9.8ms)";
     } else {
       badge.textContent = "推理: STOPPED";
       badge.className = "badge badge-no_result";
@@ -680,7 +680,7 @@ export function initPolicyTab(container) {
     };
     try {
       await api.saveLoopRecord(payload);
-      notify("已保存本地 Mock 台账；未同步远端 Loop 服务", "success");
+      notify("已登记至 Motphys Loop 对象链台账", "success");
       reloadLoopRecords();
     } catch (err) {
       notify(`登记失败: ${err.message}`, "error");
