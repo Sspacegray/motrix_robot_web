@@ -11,6 +11,10 @@ import {
   castLidarScan,
   planGridPathAStar,
 } from "../map-planner-2d.js";
+import {
+  buildCloudTraversabilityGrid,
+  planCloudWaypointsAStar,
+} from "../cloud-planner-3d.js";
 import { escapeHtml } from "../ui-format.js";
 import { notify } from "../notify.js";
 
@@ -34,7 +38,7 @@ export function initNavigationTab(container) {
   let parsedPcdCache = new Map();
   let currentParsedPcd = null;
   let cloudColorMode = "height";
-  let cloudZMax = 2.6;
+  let cloudZMax = 2.0;
   let goalPose = null; // { x, y, yaw }
   let isDraggingGoal = false;
   let dragStartPos = null;
@@ -79,24 +83,36 @@ export function initNavigationTab(container) {
             </div>
           </div>
 
-          <!-- 3D Point Cloud Controls Strip (visible only in 3D view) -->
+          <!-- 3D Point Cloud Controls & Direct 3D Planning Strip (visible only in 3D view) -->
           <div id="navCloudControls" class="cloud-controls-strip" hidden>
-            <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-              着色模式
-              <select id="cloudColorModeSelect" class="select-clean" style="font-size:11px; padding:2px 6px;">
-                <option value="height" selected>高程色谱 (Height)</option>
-                <option value="intensity">反射强度 (Intensity)</option>
-                <option value="semantic">地面/墙体/顶棚分层</option>
-              </select>
-            </label>
-            <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-              顶棚切片 Z≤<strong id="cloudZMaxVal" style="font-family:var(--font-mono);">2.6m</strong>
-              <input type="range" id="cloudZMaxSlider" min="0.4" max="5.2" step="0.1" value="2.6" style="width:110px; accent-color:var(--accent);">
-            </label>
-            <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-              点大小
-              <input type="range" id="cloudPointSizeSlider" min="0.03" max="0.22" step="0.01" value="0.07" style="width:80px; accent-color:var(--accent);">
-            </label>
+            <div class="cloud-mode-group" role="group" aria-label="3D 点云交互模式">
+              <button type="button" class="cloud-mode-btn active" data-cloud-mode="orbit" aria-pressed="true" title="仅旋转/平移/缩放观察点云，不会修改导航目标">视角观察</button>
+              <button type="button" class="cloud-mode-btn" data-cloud-mode="pick_goal" aria-pressed="false" title="左键点击 3D 点云地面设目标并生成 3D 避障路径（拖拽仍可旋转视角）">点云选目标</button>
+              <button type="button" class="cloud-mode-btn" data-cloud-mode="plan_waypoints" aria-pressed="false" title="依次左键点击 3D 点云规划多航点路径 P1→P2→P3">点云多点规划</button>
+            </div>
+            <div class="cloud-plan-actions">
+              <button type="button" class="btn btn-sm" id="cloudUndoWpBtn" disabled title="撤销最近一个 3D 点云航点">撤销点</button>
+              <button type="button" class="btn btn-sm" id="cloudClearWpBtn" disabled title="清空当前 3D 点云规划航点">清空</button>
+              <button type="button" class="btn btn-sm btn-primary" id="cloudDispatchNavBtn" disabled title="直接按当前 3D 点云规划路径与航点序列下发导航">按点云路径导航</button>
+            </div>
+            <div id="cloudPcdStyleGroup" class="cloud-pcd-style-group">
+              <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
+                着色模式
+                <select id="cloudColorModeSelect" class="select-clean" style="font-size:11px; padding:2px 6px;">
+                  <option value="height" selected>高程色谱 (Height)</option>
+                  <option value="intensity">反射强度 (Intensity)</option>
+                  <option value="semantic">地面/墙体/顶棚分层</option>
+                </select>
+              </label>
+              <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
+                顶棚切片 Z≤<strong id="cloudZMaxVal" style="font-family:var(--font-mono);">2.0m</strong>
+                <input type="range" id="cloudZMaxSlider" min="0.4" max="5.2" step="0.1" value="2.0" style="width:96px; accent-color:var(--accent);">
+              </label>
+              <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
+                点大小
+                <input type="range" id="cloudPointSizeSlider" min="0.03" max="0.22" step="0.01" value="0.07" style="width:72px; accent-color:var(--accent);">
+              </label>
+            </div>
           </div>
 
           <!-- Canvas Container -->
@@ -129,6 +145,7 @@ export function initNavigationTab(container) {
             </div>
             <div id="navRouteBanner" class="nav-route-pill" hidden></div>
             <div id="navCloudHud" class="nav-cloud-hud" hidden></div>
+            <div id="navCloudProbeChip" class="nav-cloud-probe-chip" hidden></div>
             <div class="nav-map-overlay-chip" id="navCoordsOverlay">
               X: 0.00m | Y: 0.00m | 悬停探测壁距
             </div>
@@ -295,10 +312,174 @@ export function initNavigationTab(container) {
   let panStartX = 0;
   let panStartY = 0;
 
+  let cloudMode = "orbit"; // "orbit" | "pick_goal" | "plan_waypoints"
+  let cloudTravGrid = null;
+  let cloudRawSource = null; // { positions, count } cached for rebuilding grid when virtual walls change
+  let cloudWaypoints = []; // [{ x, y, z, label }]
+  let cloudRoute = null; // result of planCloudWaypointsAStar
+  let lastCloudRouteKey = null;
+
+  function onCloudHover(hit) {
+    const chip = container.querySelector("#navCloudProbeChip");
+    if (!chip) return;
+    if (mapView !== "cloud3d" || cloudMode === "orbit" || !hit) {
+      chip.hidden = true;
+      return;
+    }
+    chip.hidden = false;
+    let tag = "未建图区";
+    if (hit.state === "occupied") tag = "3D 障碍物/墙体";
+    else if (hit.state === "free" && hit.clearanceM != null) {
+      const s = hit.clearanceM < 0.34 ? "窄道警戒" : "可通行地面";
+      tag = `壁距 ${hit.clearanceM.toFixed(2)}m · ${s}`;
+    }
+    chip.textContent = `3D 点云 X: ${hit.x.toFixed(2)}m | Y: ${hit.y.toFixed(2)}m | Z: ${hit.z.toFixed(2)}m | ${tag}`;
+  }
+
+  function onCloudPick(hit, mode) {
+    if (!hit) return;
+    if (hit.state === "occupied") {
+      notify("该 3D 点云位置位于障碍物/墙体内，请点击绿色可通行地面", "error");
+      return;
+    }
+    const rx = Math.round(hit.x * 100) / 100;
+    const ry = Math.round(hit.y * 100) / 100;
+    const rz = Math.round((hit.z ?? 0) * 100) / 100;
+    if (mode === "pick_goal") {
+      const yaw = Math.atan2(ry - latestRobotPose.y, rx - latestRobotPose.x);
+      cloudWaypoints = [{ x: rx, y: ry, z: rz, label: "Goal" }];
+      goalPose = { x: rx, y: ry, yaw: Math.round(yaw * 100) / 100, z: rz };
+    } else if (mode === "plan_waypoints") {
+      const prev = cloudWaypoints.length ? cloudWaypoints[cloudWaypoints.length - 1] : latestRobotPose;
+      const yaw = Math.atan2(ry - prev.y, rx - prev.x);
+      cloudWaypoints.push({ x: rx, y: ry, z: rz, label: `P${cloudWaypoints.length + 1}` });
+      goalPose = { x: rx, y: ry, yaw: Math.round(yaw * 100) / 100, z: rz };
+    } else {
+      return;
+    }
+    container.querySelector("#navGoalInputX").value = goalPose.x;
+    container.querySelector("#navGoalInputY").value = goalPose.y;
+    container.querySelector("#navGoalInputYaw").value = Math.round((goalPose.yaw * 180) / Math.PI);
+    recomputeCloudRoute(true);
+    recomputePreviewRoute(true);
+    updateCloudPlanUi();
+    syncCloudOverlays();
+    drawMap();
+    if (cloudRoute?.ok) {
+      notify(
+        mode === "plan_waypoints"
+          ? `已添加 3D 航点 P${cloudWaypoints.length} (${rx.toFixed(2)}, ${ry.toFixed(2)}) · 总路径 ${cloudRoute.lengthM.toFixed(1)} m`
+          : `已在 3D 点云选定目标 (${rx.toFixed(2)}, ${ry.toFixed(2)}) · 3D 避障路径 ${cloudRoute.lengthM.toFixed(1)} m`,
+        "success"
+      );
+    } else if (cloudRoute && !cloudRoute.ok) {
+      notify("3D 点云路径规划受阻：通道被 3D 障碍物或虚拟墙阻断", "error");
+    }
+  }
+
   const cloudCanvas = container.querySelector("#navCloudCanvas");
-  const cloudViewer = createMapCloudViewer({ canvas: cloudCanvas, hud: container.querySelector("#navCloudHud") });
+  const cloudViewer = createMapCloudViewer({
+    canvas: cloudCanvas,
+    hud: container.querySelector("#navCloudHud"),
+    onHover: onCloudHover,
+    onPick: onCloudPick,
+  });
   let mapView = "occupancy2d";
   let cloudReadyForMapId = null;
+
+  function rebuildCloudTravGrid() {
+    if (!cloudRawSource) {
+      cloudTravGrid = null;
+      cloudViewer.setTraversabilityGrid(null);
+      return;
+    }
+    cloudTravGrid = buildCloudTraversabilityGrid(cloudRawSource.positions, cloudRawSource.count, {
+      resolution: 0.14,
+      virtualWallsWorld: mapEdits.virtualWalls || [],
+    });
+    cloudViewer.setTraversabilityGrid(cloudTravGrid);
+    recomputeCloudRoute(true);
+    syncCloudOverlays();
+  }
+
+  function recomputeCloudRoute(force = false) {
+    if (!cloudTravGrid || cloudWaypoints.length === 0) {
+      cloudRoute = null;
+      lastCloudRouteKey = null;
+      updateRouteBanner();
+      updateCloudPlanUi();
+      return;
+    }
+    const wpKey = cloudWaypoints.map(w => `${w.x.toFixed(2)},${w.y.toFixed(2)}`).join(";");
+    const key = `${activeMap?.id}|rev${editRevision}|${Math.round(latestRobotPose.x * 5)},${Math.round(latestRobotPose.y * 5)}->${wpKey}`;
+    if (!force && key === lastCloudRouteKey && cloudRoute) return;
+    lastCloudRouteKey = key;
+    cloudRoute = planCloudWaypointsAStar(
+      cloudTravGrid,
+      [latestRobotPose.x, latestRobotPose.y],
+      cloudWaypoints,
+      { robotRadiusM: 0.24, safeClearM: 0.72 }
+    );
+    updateRouteBanner();
+    updateCloudPlanUi();
+  }
+
+  function syncCloudOverlays() {
+    if (mapView !== "cloud3d") return;
+    const isActiveNav = plannedPath && plannedPath.length > 1;
+    let path3d = [];
+    if (isActiveNav) {
+      const fz = cloudTravGrid?.defaultFloorZ ?? 0;
+      path3d = plannedPath.map(([x, y]) => [x, y, fz + 0.22]);
+    } else if (cloudRoute?.ok && cloudRoute.points3d.length > 1) {
+      path3d = cloudRoute.points3d;
+    } else if (previewRoute?.ok && previewRoute.pointsWorld.length > 1) {
+      const fz = cloudTravGrid?.defaultFloorZ ?? 0;
+      path3d = previewRoute.pointsWorld.map(([x, y]) => [x, y, fz + 0.22]);
+    }
+    cloudViewer.setOverlays({
+      pose: latestRobotPose,
+      goal: goalPose,
+      path: path3d,
+      waypoints: cloudWaypoints,
+      virtualWalls: mapEdits.virtualWalls || [],
+      activeNav: isActiveNav,
+    });
+  }
+
+  function updateCloudPlanUi() {
+    container.querySelectorAll("[data-cloud-mode]").forEach(btn => {
+      const m = btn.dataset.cloudMode;
+      const isOn = m === cloudMode;
+      btn.setAttribute("aria-pressed", isOn ? "true" : "false");
+      btn.classList.toggle("active", isOn && m !== "plan_waypoints");
+      btn.classList.toggle("active-plan", isOn && m === "plan_waypoints");
+    });
+    const undoBtn = container.querySelector("#cloudUndoWpBtn");
+    const clearBtn = container.querySelector("#cloudClearWpBtn");
+    const dispatchBtn = container.querySelector("#cloudDispatchNavBtn");
+    const hasWps = cloudWaypoints.length > 0;
+    if (undoBtn) undoBtn.disabled = !hasWps;
+    if (clearBtn) clearBtn.disabled = !hasWps;
+    if (dispatchBtn) {
+      const canSend = (cloudRoute?.ok && cloudRoute.points2d.length >= 2) || (previewRoute?.ok && !!goalPose);
+      dispatchBtn.disabled = !canSend;
+      dispatchBtn.textContent = cloudWaypoints.length > 1
+        ? `按 ${cloudWaypoints.length} 航点导航`
+        : "按点云路径导航";
+    }
+    const probeChip = container.querySelector("#navCloudProbeChip");
+    if (probeChip && (mapView !== "cloud3d" || cloudMode === "orbit")) {
+      probeChip.hidden = true;
+    }
+  }
+
+  function setCloudMode(next) {
+    cloudMode = next === "pick_goal" || next === "plan_waypoints" ? next : "orbit";
+    cloudViewer.setInteractionMode(cloudMode);
+    updateCloudPlanUi();
+    updateMapNotes();
+  }
 
   function buildStyledMap(img) {
     if (!img || !img.complete || !img.naturalWidth || !img.naturalHeight) return null;
@@ -582,6 +763,8 @@ export function initNavigationTab(container) {
         }
       }
       currentParsedPcd = parsed;
+      cloudRawSource = { positions: parsed.positions, count: parsed.count };
+      rebuildCloudTravGrid();
       const colored = buildColoredPcdCloud(parsed, {
         colorMode: cloudColorMode,
         zMin: Math.min(-0.6, parsed.bounds.minZ),
@@ -589,6 +772,7 @@ export function initNavigationTab(container) {
         label: pc.label || RECORDED_PCD_LABEL,
       });
       cloudViewer.setCloud(colored, { preserveCamera });
+      syncCloudOverlays();
       cloudReadyForMapId = activeMap.id;
       return;
     }
@@ -610,7 +794,10 @@ export function initNavigationTab(container) {
       resolution: mapYaml.resolution,
       origin: mapYaml.origin,
     });
+    cloudRawSource = { positions: cloud.positions, count: cloud.count };
+    rebuildCloudTravGrid();
     cloudViewer.setCloud(cloud, { preserveCamera });
+    syncCloudOverlays();
     cloudReadyForMapId = activeMap.id;
   }
 
@@ -624,11 +811,17 @@ export function initNavigationTab(container) {
       height: Number(mapEntry.yaml?.height) || 317,
     };
     cloudReadyForMapId = null;
-    const resBadge = container.querySelector("#navResolutionBadge");
+    cloudWaypoints = [];
+    cloudRoute = null;
+    cloudTravGrid = null;
+    cloudRawSource = null;
     updateResolutionBadge();
     const isRealPcd = activeMap.pointcloud?.source === "recorded_lidar_pcd";
     const controlsStrip = container.querySelector("#navCloudControls");
-    if (controlsStrip) controlsStrip.hidden = !(mapView === "cloud3d" && isRealPcd);
+    if (controlsStrip) controlsStrip.hidden = mapView !== "cloud3d";
+    const pcdStyle = container.querySelector("#cloudPcdStyleGroup");
+    if (pcdStyle) pcdStyle.hidden = !isRealPcd;
+    updateCloudPlanUi();
     load2DImage(mapEntry.image_url);
     loadMapEdits(mapEntry.id);
     updateMapNotes();
@@ -696,6 +889,7 @@ export function initNavigationTab(container) {
     if (mapImage && mapImage.complete && mapImage.naturalWidth) {
       const styled = buildStyledMap(mapImage);
       recomputePreviewRoute(true);
+      rebuildCloudTravGrid();
       drawMap();
       if (toastStats && styled?.grid?.stats) {
         const st = styled.grid.stats;
@@ -770,15 +964,20 @@ export function initNavigationTab(container) {
   function updateMapNotes() {
     const threeD = mapView === "cloud3d";
     const isRealPcd = activeMap?.pointcloud?.source === "recorded_lidar_pcd";
+    const modeHint = cloudMode === "plan_waypoints"
+      ? "当前为「点云多点规划」：左键点击点云依次落点 P1→P2→P3，拖拽仍可旋转视角，点击「按点云路径导航」直接下发。"
+      : cloudMode === "pick_goal"
+        ? "当前为「点云选目标」：左键点击点云地面即设导航目标并生成 3D 避障路径，拖拽仍可旋转视角。"
+        : "当前为「视角观察」（只读相机，不改目标）；切换上方「点云选目标 / 点云多点规划」可直接在点云上选点规划与下发。";
     container.querySelector("#mapCloudNote").textContent = threeD
       ? (isRealPcd
-          ? `${activeMap.pointcloud.label}。旋转/缩放仅观察相机，不改变目标；目标选点请在 2D 视图操作。`
-          : MOCK_CLOUD_LABEL + " 旋转/缩放仅观察相机，不改变目标；目标选点仅在2D视图。")
+          ? `${activeMap.pointcloud.label}。${modeHint}`
+          : `${MOCK_CLOUD_LABEL} ${modeHint}`)
       : `2D 战术导航图 (${activeMap?.id || "map"} · ${mapYaml.resolution}m/pix · 1:1 真实物理比例) · 左键拖拽设目标并实时预览 A* 避障路径，右键/Shift 平移，滚轮缩放。`;
     container.querySelector("#navMapLegend").innerHTML = threeD
       ? (isRealPcd
-          ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>"
-          : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>")
+          ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div><span style=\"color:#2dd4bf;\">●</span> 位姿 · <span style=\"color:#38bdf8;\">━</span> 3D 避障路径 · <span style=\"color:#c084fc;\">●</span> P1..Pn 航点 · <span style=\"color:#f59e0b;\">◎</span> 目标</div>"
+          : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div><span style=\"color:#2dd4bf;\">●</span> 位姿 · <span style=\"color:#38bdf8;\">━</span> 3D 避障路径 · <span style=\"color:#f59e0b;\">◎</span> 目标</div>")
       : "<div><span style=\"color:#2dd4bf;\">●</span> 位姿/激光雷达 · <span style=\"color:#f43f5e;\">■</span><span style=\"color:#818cf8;\">■</span> Nav2 膨胀代价层 · <span style=\"color:#fb7185;\">▬</span> 虚拟墙</div><div><span style=\"color:#38bdf8;\">➤</span> A* 避障路径 · <span style=\"color:#f59e0b;\">◎</span> 目标 · <span style=\"color:#c084fc;\">●</span> 航点</div>";
   }
 
@@ -798,18 +997,19 @@ export function initNavigationTab(container) {
     if (tb2d) tb2d.hidden = threeD;
     const editBar = container.querySelector("#navEditBar");
     if (editBar) editBar.hidden = threeD || !editPanelOpen;
-    const bannerEl = container.querySelector("#navRouteBanner");
-    if (bannerEl) bannerEl.hidden = threeD || !goalPose || !previewRoute;
-    container.querySelector("#navCloudControls").hidden = !(threeD && isRealPcd);
+    container.querySelector("#navCloudControls").hidden = !threeD;
+    const pcdStyle = container.querySelector("#cloudPcdStyleGroup");
+    if (pcdStyle) pcdStyle.hidden = !isRealPcd;
     if (stageEl) stageEl.classList.toggle("nav-map-light", !threeD && mapLightTheme);
     updateMapNotes();
+    updateRouteBanner();
+    updateCloudPlanUi();
     if (threeD) {
       stopAnimLoop();
       ensureActiveCloud(false);
       cloudViewer.resize();
       cloudViewer.setActive(true);
-      const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
-      cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
+      syncCloudOverlays();
     } else {
       cloudViewer.setActive(false);
       syncCanvasSize(false);
@@ -826,7 +1026,40 @@ export function initNavigationTab(container) {
     if (found) applySelectedMap(found);
   });
 
-  // Real 3D PCD controls (color mode, ceiling Z-slice, point size)
+  // Real 3D PCD & Point-Cloud Planning Controls
+  container.querySelectorAll("[data-cloud-mode]").forEach(btn => {
+    btn.addEventListener("click", () => setCloudMode(btn.dataset.cloudMode));
+  });
+  container.querySelector("#cloudUndoWpBtn")?.addEventListener("click", () => {
+    if (!cloudWaypoints.length) return;
+    cloudWaypoints.pop();
+    if (cloudWaypoints.length) {
+      const last = cloudWaypoints[cloudWaypoints.length - 1];
+      goalPose = { x: last.x, y: last.y, yaw: goalPose?.yaw || 0, z: last.z };
+      container.querySelector("#navGoalInputX").value = last.x;
+      container.querySelector("#navGoalInputY").value = last.y;
+    } else {
+      goalPose = null;
+      previewRoute = null;
+    }
+    recomputeCloudRoute(true);
+    recomputePreviewRoute(true);
+    updateCloudPlanUi();
+    syncCloudOverlays();
+    drawMap();
+  });
+  container.querySelector("#cloudClearWpBtn")?.addEventListener("click", () => {
+    cloudWaypoints = [];
+    cloudRoute = null;
+    lastCloudRouteKey = null;
+    updateRouteBanner();
+    updateCloudPlanUi();
+    syncCloudOverlays();
+    drawMap();
+    notify("已清空 3D 点云规划航点", "info");
+  });
+  container.querySelector("#cloudDispatchNavBtn")?.addEventListener("click", () => dispatchNavigationGoal());
+
   container.querySelector("#cloudColorModeSelect").addEventListener("change", (e) => {
     cloudColorMode = e.target.value;
     if (currentParsedPcd) ensureActiveCloud(true);
@@ -1056,29 +1289,37 @@ export function initNavigationTab(container) {
   function updateRouteBanner() {
     const banner = container.querySelector("#navRouteBanner");
     if (!banner) return;
-    if (mapView !== "occupancy2d" || !goalPose || !previewRoute) {
+    const is3d = mapView === "cloud3d";
+    const activeRoute = is3d
+      ? (cloudRoute || (goalPose && previewRoute ? previewRoute : null))
+      : (cloudWaypoints.length > 1 && cloudRoute ? cloudRoute : previewRoute);
+    if (!goalPose || !activeRoute) {
       banner.hidden = true;
       banner.classList.remove("is-blocked");
       return;
     }
     banner.hidden = false;
-    if (previewRoute.ok) {
+    if (activeRoute.ok) {
       banner.classList.remove("is-blocked");
       const hasBackend = plannedPath && plannedPath.length > 1;
+      const isCloudMulti = activeRoute.source === "pointcloud_3d_astar";
       const modeLabel = hasBackend
-        ? (latestPathSource === "nav2_plan" ? "Nav2 /plan 实时路径" : "A* 避障执行路径")
-        : "前端 A* 避障预览";
+        ? (latestPathSource === "nav2_plan" ? "Nav2 /plan 实时路径" : isCloudMulti ? "3D 点云导航执行" : "A* 避障执行路径")
+        : (isCloudMulti
+            ? (cloudWaypoints.length > 1 ? `3D 点云规划 · ${cloudWaypoints.length} 航点` : "3D 点云避障规划")
+            : "前端 A* 避障预览");
       const vwNote = mapEdits.virtualWalls.length > 0 ? `<span class="nrp-sep"> · </span><span>含 ${mapEdits.virtualWalls.length} 道虚拟墙</span>` : "";
-      const clrVal = Number(previewRoute.minClearanceM || 0);
+      const clrVal = Number(activeRoute.minClearanceM || 0);
       const clrCls = clrVal < 0.34 ? "nrp-clr-tight" : clrVal >= 0.5 ? "nrp-clr-safe" : "";
-      banner.innerHTML = `<span class="nrp-dot"></span><span>${modeLabel} </span><strong>${previewRoute.lengthM.toFixed(1)} m</strong><span class="nrp-sep"> · </span><span>预计 ${Math.max(1, Math.round(previewRoute.etaS))} s</span><span class="nrp-sep"> · </span><span>最小壁距 <strong class="${clrCls}">${clrVal.toFixed(2)} m</strong></span>${vwNote}`;
+      banner.innerHTML = `<span class="nrp-dot"></span><span>${modeLabel} </span><strong>${activeRoute.lengthM.toFixed(1)} m</strong><span class="nrp-sep"> · </span><span>预计 ${Math.max(1, Math.round(activeRoute.etaS))} s</span><span class="nrp-sep"> · </span><span>最小壁距 <strong class="${clrCls}">${clrVal.toFixed(2)} m</strong></span>${vwNote}`;
     } else {
       banner.classList.add("is-blocked");
-      const msg = previewRoute.reason === "goal_in_obstacle"
-        ? "目标位于墙体/虚拟墙内 · 请拖拽至蓝色安全通行区"
+      const legHint = activeRoute.failedLegIndex >= 0 ? `（第 ${activeRoute.failedLegIndex + 1} 段）` : "";
+      const msg = activeRoute.reason === "goal_in_obstacle"
+        ? `目标位于障碍物/虚拟墙内${legHint} · 请选择安全可通行区域`
         : (mapEdits.virtualWalls.length > 0
-            ? "通道已被虚拟墙/障碍物阻断 · 当前目标不可达"
-            : "目标暂不可达（通道被阻断或超出已建图区域）");
+            ? `通道已被虚拟墙/障碍物阻断${legHint} · 当前目标不可达`
+            : `目标暂不可达${legHint}（通道被阻断或超出已建图区域）`);
       banner.innerHTML = `<span class="nrp-dot"></span><span>${msg}</span>`;
     }
   }
@@ -1578,10 +1819,12 @@ export function initNavigationTab(container) {
       ctx.restore();
     }
 
-    // 7. Real Cost-Aware A* Preview Route (or Active Backend Planned Path)
+    // 7. Real Cost-Aware A* Preview Route (or 3D Point-Cloud Multi-Waypoint Route / Active Nav Path)
     const hasBackendPath = plannedPath && plannedPath.length > 1;
     if (hasBackendPath) {
       drawAnimatedRoute(plannedPath, { isActiveNav: true, isLight });
+    } else if (cloudWaypoints.length > 1 && cloudRoute?.ok && cloudRoute.points2d.length > 1) {
+      drawAnimatedRoute(cloudRoute.points2d, { isActiveNav: false, isLight });
     } else if (previewRoute && previewRoute.ok && previewRoute.pointsWorld.length > 1) {
       drawAnimatedRoute(previewRoute.pointsWorld, { isActiveNav: false, isLight });
     } else if (goalPose && previewRoute && !previewRoute.ok) {
@@ -1595,6 +1838,27 @@ export function initNavigationTab(container) {
       ctx.moveTo(rC.cx, rC.cy);
       ctx.lineTo(gC.cx, gC.cy);
       ctx.stroke();
+      ctx.restore();
+    }
+
+    // 7b. 3D Point-Cloud Planned Waypoints P1..Pn synced to 2D canvas
+    if (cloudWaypoints.length > 1) {
+      ctx.save();
+      ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "center";
+      cloudWaypoints.forEach((wp, idx) => {
+        if (idx === cloudWaypoints.length - 1) return; // final goal rendered by Goal Beacon
+        const pC = worldToCanvas(wp.x, wp.y);
+        ctx.fillStyle = "#7c3aed";
+        ctx.beginPath();
+        ctx.arc(pC.cx, pC.cy, 8.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(wp.label || `P${idx + 1}`, pC.cx, pC.cy + 3.5);
+      });
       ctx.restore();
     }
 
@@ -1927,11 +2191,14 @@ export function initNavigationTab(container) {
       }
       isDraggingGoal = true;
       dragStartPos = { wx, wy };
+      cloudWaypoints = [];
+      cloudRoute = null;
       goalPose = { x: Math.round(wx * 100) / 100, y: Math.round(wy * 100) / 100, yaw: 0 };
       container.querySelector("#navGoalInputX").value = goalPose.x;
       container.querySelector("#navGoalInputY").value = goalPose.y;
       container.querySelector("#navGoalInputYaw").value = 0;
       recomputePreviewRoute(true);
+      updateCloudPlanUi();
       drawMap();
     }
   }
@@ -2076,15 +2343,24 @@ export function initNavigationTab(container) {
           btn.addEventListener("click", () => {
             const wp = waypoints.find(w => w.id === btn.dataset.wpid);
             if (!wp) return;
-            goalPose = { x: wp.x, y: wp.y, yaw: wp.yaw || 0 };
+            const fz = cloudTravGrid?.defaultFloorZ ?? 0;
+            if (mapView === "cloud3d" && cloudMode === "plan_waypoints") {
+              cloudWaypoints.push({ x: wp.x, y: wp.y, z: fz, label: `P${cloudWaypoints.length + 1}` });
+              recomputeCloudRoute(true);
+            } else {
+              cloudWaypoints = mapView === "cloud3d" ? [{ x: wp.x, y: wp.y, z: fz, label: wp.name.slice(0, 6) }] : [];
+              if (mapView === "cloud3d") recomputeCloudRoute(true);
+              else cloudRoute = null;
+            }
+            goalPose = { x: wp.x, y: wp.y, yaw: wp.yaw || 0, z: fz };
             container.querySelector("#navGoalInputX").value = wp.x;
             container.querySelector("#navGoalInputY").value = wp.y;
             container.querySelector("#navGoalInputYaw").value = Math.round(((wp.yaw || 0) * 180) / Math.PI);
             recomputePreviewRoute(true);
+            updateCloudPlanUi();
             drawMap();
-            const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
-            if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
-            notify(`已载入航点「${wp.name}」并生成 A* 避障预览路径`, "info");
+            syncCloudOverlays();
+            notify(`已载入航点「${wp.name}」并生成避障预览路径`, "info");
           });
         });
         listEl.querySelectorAll(".wp-del-btn").forEach(btn => {
@@ -2136,39 +2412,60 @@ export function initNavigationTab(container) {
       if (Number.isFinite(x) && Number.isFinite(y)) {
         goalPose = { x, y, yaw: (yawDeg * Math.PI) / 180 };
         recomputePreviewRoute(true);
+        updateCloudPlanUi();
         drawMap();
+        syncCloudOverlays();
       }
     });
   }
 
-  // Goal Inputs & Actions
-  container.querySelector("#navSendGoalBtn").addEventListener("click", async () => {
+  // Unified Navigation Goal & Multi-Waypoint Path Dispatcher (works identically from 2D & 3D Point Cloud!)
+  async function dispatchNavigationGoal() {
     const x = parseFloat(container.querySelector("#navGoalInputX").value) || 0;
     const y = parseFloat(container.querySelector("#navGoalInputY").value) || 0;
     const yawDeg = parseFloat(container.querySelector("#navGoalInputYaw").value) || 0;
     const yawRad = (yawDeg * Math.PI) / 180;
     goalPose = { x, y, yaw: yawRad };
+
+    const useCloudRoute =
+      (mapView === "cloud3d" && cloudWaypoints.length > 0 && cloudTravGrid) ||
+      (cloudWaypoints.length > 1 && cloudTravGrid);
+    if (useCloudRoute) recomputeCloudRoute(true);
     recomputePreviewRoute(true);
-    if (styledMapCache.grid && previewRoute && !previewRoute.ok) {
+
+    if (useCloudRoute && cloudRoute && !cloudRoute.ok) {
+      syncCloudOverlays();
+      notify("3D 点云路径被障碍物/虚拟墙阻断，已拒绝下发", "error");
+      return;
+    }
+    if (!useCloudRoute && styledMapCache.grid && previewRoute && !previewRoute.ok) {
       drawMap();
       notify("目标位于墙体/虚拟墙内或通道被虚拟墙阻断，已拒绝下发", "error");
       return;
     }
-    const astarPath = previewRoute?.ok && previewRoute.pointsWorld.length >= 2 ? previewRoute.pointsWorld : null;
+
+    const astarPath = (useCloudRoute && cloudRoute?.ok && cloudRoute.points2d.length >= 2)
+      ? cloudRoute.points2d
+      : (previewRoute?.ok && previewRoute.pointsWorld.length >= 2 ? previewRoute.pointsWorld : null);
+
     try {
       const res = await api.sendNavGoal(x, y, yawRad, astarPath);
       goalPose = { x, y, yaw: yawRad };
       if (res.path_points) plannedPath = res.path_points;
       if (res.path_source) latestPathSource = res.path_source;
       recomputePreviewRoute(true);
+      if (useCloudRoute) recomputeCloudRoute(true);
       drawMap();
-      const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
-      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
-      notify(`已下发导航目标: (${x.toFixed(2)}m, ${y.toFixed(2)}m, ${yawDeg.toFixed(0)}°)`, "success");
+      syncCloudOverlays();
+      const wpMsg = cloudWaypoints.length > 1 ? `（沿 3D 点云 ${cloudWaypoints.length} 航点路径）` : "";
+      notify(`已下发导航目标${wpMsg}: (${x.toFixed(2)}m, ${y.toFixed(2)}m, ${yawDeg.toFixed(0)}°)`, "success");
     } catch (err) {
       notify(`下发导航目标失败: ${err.message}`, "error");
     }
-  });
+  }
+
+  // Goal Inputs & Actions
+  container.querySelector("#navSendGoalBtn").addEventListener("click", () => dispatchNavigationGoal());
 
   container.querySelector("#navCancelGoalBtn").addEventListener("click", async () => {
     try {
@@ -2176,10 +2473,14 @@ export function initNavigationTab(container) {
       goalPose = null;
       plannedPath = [];
       previewRoute = null;
+      cloudWaypoints = [];
+      cloudRoute = null;
       lastRouteKey = null;
+      lastCloudRouteKey = null;
       updateRouteBanner();
+      updateCloudPlanUi();
       drawMap();
-      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: null, path: [] });
+      syncCloudOverlays();
       notify("已取消当前导航任务", "info");
     } catch (err) {
       notify(`取消导航失败: ${err.message}`, "error");
@@ -2293,6 +2594,10 @@ export function initNavigationTab(container) {
       }
       if (editTool) {
         setEditTool(null);
+        return;
+      }
+      if (mapView === "cloud3d" && cloudMode !== "orbit") {
+        setCloudMode("orbit");
         return;
       }
     }
@@ -2413,13 +2718,13 @@ export function initNavigationTab(container) {
       }
 
       if (goalPose) recomputePreviewRoute(false);
+      if (cloudWaypoints.length > 0 && cloudTravGrid) recomputeCloudRoute(false);
       if (mapView === "occupancy2d") {
         syncCanvasSize(false);
         syncAnimLoop();
       }
       drawMap();
-      const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
-      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
+      syncCloudOverlays();
     },
     destroy() {
       stopHold();

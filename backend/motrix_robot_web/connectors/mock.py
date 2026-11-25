@@ -532,10 +532,12 @@ class MockRobotConnector(RobotConnector):
                             if math.hypot(move_dx, move_dy) > 1e-3 and len(pts) > 2:
                                 desired_yaw = math.atan2(move_dy, move_dx)
                                 d_head = math.atan2(math.sin(desired_yaw - pyaw), math.cos(desired_yaw - pyaw))
-                                self._nav.pose_map["yaw"] = round(pyaw + max(-5.0 * dt, min(5.0 * dt, d_head)), 4)
+                                nyaw = pyaw + max(-5.0 * dt, min(5.0 * dt, d_head))
+                                self._nav.pose_map["yaw"] = round(math.atan2(math.sin(nyaw), math.cos(nyaw)), 4)
                             else:
                                 step_y = max(-4.8 * dt, min(4.8 * dt, dyaw_g))
-                                self._nav.pose_map["yaw"] = round(pyaw + step_y, 4)
+                                nyaw = pyaw + step_y
+                                self._nav.pose_map["yaw"] = round(math.atan2(math.sin(nyaw), math.cos(nyaw)), 4)
                         else:
                             step_d = min(dist_g, remaining_step)
                             self._nav.pose_map["x"] = round(px + (dx_g / max(dist_g, 1e-6)) * step_d, 4)
