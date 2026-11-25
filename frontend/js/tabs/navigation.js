@@ -94,15 +94,21 @@ export function initNavigationTab(container) {
 
           <!-- Canvas Container -->
           <p class="preview-field-note" id="mapCloudNote">2D 真实占用栅格 · 拖动仅设置本地目标；下发仍需显式操作与 Lease。</p>
-          <div style="position:relative; width:100%; height:480px; background:#0f172a; border-radius:var(--radius-sm); overflow:hidden; border:1px solid var(--border);">
-            <canvas id="navMapCanvas" width="760" height="480" style="width:100%; height:100%; display:block; cursor:crosshair;"></canvas>
-            <canvas id="navCloudCanvas" class="nav-cloud-canvas" width="760" height="480" hidden></canvas>
+          <div id="navMapStage" class="nav-map-stage">
+            <canvas id="navMapCanvas" width="760" height="540" style="width:100%; height:100%; display:block; cursor:crosshair;"></canvas>
+            <canvas id="navCloudCanvas" class="nav-cloud-canvas" width="760" height="540" hidden></canvas>
+            <div id="nav2dToolbar" class="nav-2d-toolbar" role="toolbar" aria-label="2D 地图视图控制">
+              <button type="button" class="nav-map-tool-btn" id="navZoomInBtn" title="放大地图 (+)">＋</button>
+              <button type="button" class="nav-map-tool-btn" id="navZoomOutBtn" title="缩小地图 (-)">－</button>
+              <button type="button" class="nav-map-tool-btn" id="navFitMapBtn" title="1:1 等比自适应完整建图区域">适应画面</button>
+              <button type="button" class="nav-map-tool-btn" id="navMapThemeBtn" aria-pressed="false" title="切换暗色蓝图 / 亮色工程底图">亮底</button>
+            </div>
             <div id="navCloudHud" class="nav-cloud-hud" hidden></div>
-            <div style="position:absolute; bottom:12px; left:12px; background:rgba(15,23,42,0.84); color:#f8fafc; font-size:11px; padding:4px 8px; border-radius:4px; font-family:var(--font-mono); pointer-events:none;" id="navCoordsOverlay">
+            <div class="nav-map-overlay-chip" id="navCoordsOverlay">
               X: 0.00m | Y: 0.00m | Goal Yaw: 0°
             </div>
-            <div id="navMapLegend" style="position:absolute; top:12px; right:12px; display:flex; flex-direction:column; gap:4px; font-size:11px; color:#cbd5e1; background:rgba(15,23,42,0.78); padding:6px 10px; border-radius:4px;">
-              <div>青色：Mock位姿 · 橙色：本地目标 · 蓝色虚线：规划路径</div>
+            <div id="navMapLegend" class="nav-map-legend">
+              <div>青色：当前位姿 · 橙色：本地目标 · 蓝色虚线：规划路径</div>
             </div>
           </div>
 
@@ -226,8 +232,15 @@ export function initNavigationTab(container) {
     </div>
   `;
 
+  const stageEl = container.querySelector("#navMapStage");
   const canvas = container.querySelector("#navMapCanvas");
   const ctx = canvas.getContext("2d");
+  let viewW = 760;
+  let viewH = 540;
+  let canvasDpr = 1;
+  let hasFittedInitialView = false;
+  let mapLightTheme = false;
+  let styledMapCache = { key: null, dark: null, light: null, bounds: null };
   let scale = 1.0;
   let offsetX = 100;
   let offsetY = 50;
@@ -240,11 +253,187 @@ export function initNavigationTab(container) {
   let mapView = "occupancy2d";
   let cloudReadyForMapId = null;
 
+  function buildStyledMap(img) {
+    if (!img || !img.complete || !img.naturalWidth || !img.naturalHeight) return null;
+    const key = `${activeMap?.id || ""}|${img.src}|${img.naturalWidth}x${img.naturalHeight}`;
+    if (styledMapCache.key === key && styledMapCache.dark && styledMapCache.light) {
+      return styledMapCache;
+    }
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const probe = document.createElement("canvas");
+    probe.width = w;
+    probe.height = h;
+    const pctx = probe.getContext("2d", { willReadFrequently: true });
+    pctx.drawImage(img, 0, 0);
+    const src = pctx.getImageData(0, 0, w, h).data;
+
+    // Classify every cell using ROS map_saver trinary convention:
+    // luma >= 235 (~254) = free navigable floor, luma <= 90 (~0) = occupied wall,
+    // mid-gray (~205, 90 < luma < 235) = unknown unexplored void (rendered transparent!)
+    const cls = new Uint8Array(w * h); // 0=unknown, 1=free, 2=occupied
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const idx = row + x;
+        const p = idx * 4;
+        const luma = (src[p] + src[p + 1] + src[p + 2]) / 3;
+        if (luma <= 90) {
+          cls[idx] = 2;
+        } else if (luma >= 235) {
+          cls[idx] = 1;
+        } else {
+          cls[idx] = 0;
+        }
+        if (cls[idx] !== 0) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    const bounds = maxX >= minX && maxY >= minY
+      ? { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 }
+      : { minX: 0, minY: 0, maxX: w - 1, maxY: h - 1, width: w, height: h };
+
+    const makeCanvas = (isLight) => {
+      const outCanvas = document.createElement("canvas");
+      outCanvas.width = w;
+      outCanvas.height = h;
+      const octx = outCanvas.getContext("2d");
+      const outImg = octx.createImageData(w, h);
+      const dst = outImg.data;
+      // Dark Blueprint: transparent unknown, #1c314a navigable floor, #e0f2fe CAD walls + subtle cyan edge halo
+      // Light Blueprint: transparent unknown, #ffffff navigable floor, #0f172a ink walls + subtle slate border
+      const freeR = isLight ? 255 : 28;
+      const freeG = isLight ? 255 : 49;
+      const freeB = isLight ? 255 : 74;
+      const wallR = isLight ? 15 : 224;
+      const wallG = isLight ? 23 : 242;
+      const wallB = isLight ? 42 : 254;
+      const haloR = isLight ? 100 : 56;
+      const haloG = isLight ? 116 : 189;
+      const haloB = isLight ? 139 : 248;
+      const haloA = isLight ? 110 : 120;
+
+      for (let y = 0; y < h; y++) {
+        const row = y * w;
+        for (let x = 0; x < w; x++) {
+          const idx = row + x;
+          const p = idx * 4;
+          const c = cls[idx];
+          if (c === 2) {
+            dst[p] = wallR;
+            dst[p + 1] = wallG;
+            dst[p + 2] = wallB;
+            dst[p + 3] = 255;
+          } else if (c === 1) {
+            // Soft 1px architectural wall border when directly adjacent to an occupied cell
+            const nearWall =
+              (x > 0 && cls[idx - 1] === 2) ||
+              (x + 1 < w && cls[idx + 1] === 2) ||
+              (y > 0 && cls[idx - w] === 2) ||
+              (y + 1 < h && cls[idx + w] === 2);
+            if (nearWall) {
+              const a = isLight ? 0.22 : 0.30;
+              dst[p] = Math.round(freeR * (1 - a) + haloR * a);
+              dst[p + 1] = Math.round(freeG * (1 - a) + haloG * a);
+              dst[p + 2] = Math.round(freeB * (1 - a) + haloB * a);
+              dst[p + 3] = 255;
+            } else {
+              dst[p] = freeR;
+              dst[p + 1] = freeG;
+              dst[p + 2] = freeB;
+              dst[p + 3] = 255;
+            }
+          } else {
+            const nearWall =
+              (x > 0 && cls[idx - 1] === 2) ||
+              (x + 1 < w && cls[idx + 1] === 2) ||
+              (y > 0 && cls[idx - w] === 2) ||
+              (y + 1 < h && cls[idx + w] === 2);
+            if (nearWall) {
+              dst[p] = haloR;
+              dst[p + 1] = haloG;
+              dst[p + 2] = haloB;
+              dst[p + 3] = haloA;
+            } else {
+              dst[p + 3] = 0;
+            }
+          }
+        }
+      }
+      octx.putImageData(outImg, 0, 0);
+      return outCanvas;
+    };
+
+    styledMapCache = {
+      key,
+      dark: makeCanvas(false),
+      light: makeCanvas(true),
+      bounds,
+    };
+    updateResolutionBadge();
+    return styledMapCache;
+  }
+
+  function updateResolutionBadge() {
+    const resBadge = container.querySelector("#navResolutionBadge");
+    if (!resBadge) return;
+    const res = Number(mapYaml.resolution) || 0.05;
+    const b = styledMapCache.bounds;
+    const spanW = ((b ? b.width : (mapImage?.naturalWidth || mapYaml.width || 0)) * res).toFixed(1);
+    const spanH = ((b ? b.height : (mapImage?.naturalHeight || mapYaml.height || 0)) * res).toFixed(1);
+    resBadge.textContent = `${res}m/pix · ${spanW}m × ${spanH}m · 1:1 等比`;
+  }
+
+  function syncCanvasSize(forceRefit = false) {
+    if (!stageEl || !canvas) return;
+    const rect = stageEl.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 40) return;
+    const nextW = Math.round(rect.width);
+    const nextH = Math.round(rect.height);
+    const nextDpr = Math.min(window.devicePixelRatio || 1, 2);
+    const sizeChanged = nextW !== viewW || nextH !== viewH || nextDpr !== canvasDpr;
+    if (!sizeChanged && !forceRefit) return;
+
+    // Preserve world-center anchor when resizing an already-fitted map
+    const prevCenterPx = (viewW / 2 - offsetX) / Math.max(scale, 1e-6);
+    const prevCenterPy = (viewH / 2 - offsetY) / Math.max(scale, 1e-6);
+
+    viewW = nextW;
+    viewH = nextH;
+    canvasDpr = nextDpr;
+    canvas.width = Math.round(viewW * canvasDpr);
+    canvas.height = Math.round(viewH * canvasDpr);
+
+    if (forceRefit || !hasFittedInitialView) {
+      resetView();
+    } else {
+      offsetX = viewW / 2 - prevCenterPx * scale;
+      offsetY = viewH / 2 - prevCenterPy * scale;
+      drawMap();
+    }
+  }
+
+  const mapResizeObserver = typeof ResizeObserver !== "undefined"
+    ? new ResizeObserver(() => {
+        if (mapView === "occupancy2d") syncCanvasSize(false);
+        else cloudViewer.resize();
+      })
+    : null;
+  if (mapResizeObserver && stageEl) mapResizeObserver.observe(stageEl);
+
   function load2DImage(url) {
+    styledMapCache = { key: null, dark: null, light: null, bounds: null };
+    hasFittedInitialView = false;
     mapImage = new Image();
     mapImage.src = url;
     mapImage.onload = () => {
-      resetView();
+      buildStyledMap(mapImage);
+      syncCanvasSize(true);
       drawMap();
       if (mapView === "cloud3d") ensureActiveCloud(false);
     };
@@ -314,7 +503,7 @@ export function initNavigationTab(container) {
     };
     cloudReadyForMapId = null;
     const resBadge = container.querySelector("#navResolutionBadge");
-    if (resBadge) resBadge.textContent = `分辨率: ${mapYaml.resolution}m/pix`;
+    updateResolutionBadge();
     const isRealPcd = activeMap.pointcloud?.source === "recorded_lidar_pcd";
     const controlsStrip = container.querySelector("#navCloudControls");
     if (controlsStrip) controlsStrip.hidden = !(mapView === "cloud3d" && isRealPcd);
@@ -331,12 +520,12 @@ export function initNavigationTab(container) {
       ? (isRealPcd
           ? `${activeMap.pointcloud.label}。旋转/缩放仅观察相机，不改变目标；目标选点请在 2D 视图操作。`
           : MOCK_CLOUD_LABEL + " 旋转/缩放仅观察相机，不改变目标；目标选点仅在2D视图。")
-      : `2D 真实占用栅格 (${activeMap?.id || "map"} · ${mapYaml.resolution}m/pix) · 左键拖拽设目标，右键/Shift 平移，滚轮缩放。`;
+      : `2D 真实占用栅格 (${activeMap?.id || "map"} · ${mapYaml.resolution}m/pix · 1:1 真实物理比例) · 左键拖拽设目标，右键/Shift 平移，滚轮缩放。`;
     container.querySelector("#navMapLegend").innerHTML = threeD
       ? (isRealPcd
-          ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div>青色：Mock位姿 · 橙色：已有目标（只读）</div>"
-          : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：Mock位姿 · 橙色：已有目标（只读）</div>")
-      : "<div>青色：Mock位姿 · 橙色：本地目标 · 紫点：常用航点</div><div>蓝色虚线：Mock规划路径</div>";
+          ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>"
+          : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>")
+      : "<div><span style=\"color:#2dd4bf;\">●</span> 机器人位姿 · <span style=\"color:#f59e0b;\">●</span> 导航目标 · <span style=\"color:#c084fc;\">●</span> 常用航点</div><div><span style=\"color:#38bdf8;\">- -</span> 规划路径 · 实测 1:1 物理比例尺</div>";
   }
 
   function setMapView(next) {
@@ -351,7 +540,10 @@ export function initNavigationTab(container) {
     cloudCanvas.hidden = !threeD;
     container.querySelector("#navCloudHud").hidden = !threeD;
     container.querySelector("#navCoordsOverlay").hidden = threeD;
+    const tb2d = container.querySelector("#nav2dToolbar");
+    if (tb2d) tb2d.hidden = threeD;
     container.querySelector("#navCloudControls").hidden = !(threeD && isRealPcd);
+    if (stageEl) stageEl.classList.toggle("nav-map-light", !threeD && mapLightTheme);
     updateMapNotes();
     if (threeD) {
       ensureActiveCloud(false);
@@ -360,6 +552,8 @@ export function initNavigationTab(container) {
       cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
     } else {
       cloudViewer.setActive(false);
+      syncCanvasSize(false);
+      drawMap();
     }
   }
   container.querySelectorAll("[data-map-view]").forEach(btn => btn.addEventListener("click", () => setMapView(btn.dataset.mapView)));
@@ -389,9 +583,28 @@ export function initNavigationTab(container) {
     if (!canvas || !mapImage) return;
     const iw = mapImage.naturalWidth || mapYaml.width || 274;
     const ih = mapImage.naturalHeight || mapYaml.height || 317;
-    scale = Math.min(canvas.width / iw, canvas.height / ih) * 0.94;
-    offsetX = (canvas.width - iw * scale) / 2;
-    offsetY = (canvas.height - ih * scale) / 2;
+    const b = styledMapCache.bounds || { minX: 0, minY: 0, width: iw, height: ih };
+    const padX = Math.min(44, viewW * 0.08);
+    const padY = Math.min(44, viewH * 0.09);
+    const usableW = Math.max(80, viewW - padX * 2);
+    const usableH = Math.max(80, viewH - padY * 2);
+    // Strict 1:1 isotropic scale (pixels per map pixel identical in X and Y!)
+    scale = Math.min(usableW / Math.max(1, b.width), usableH / Math.max(1, b.height));
+    const cxImg = b.minX + b.width * 0.5;
+    const cyImg = b.minY + b.height * 0.5;
+    offsetX = viewW * 0.5 - cxImg * scale;
+    offsetY = viewH * 0.5 - cyImg * scale;
+    hasFittedInitialView = true;
+    drawMap();
+  }
+
+  function zoomAtCenter(factor) {
+    const cx = viewW * 0.5;
+    const cy = viewH * 0.5;
+    const newScale = Math.min(Math.max(scale * factor, 0.25), 14.0);
+    offsetX = cx - (cx - offsetX) * (newScale / scale);
+    offsetY = cy - (cy - offsetY) * (newScale / scale);
+    scale = newScale;
     drawMap();
   }
 
@@ -399,8 +612,20 @@ export function initNavigationTab(container) {
     if (mapView === "cloud3d") cloudViewer.resetView();
     else resetView();
   });
+  container.querySelector("#navZoomInBtn")?.addEventListener("click", () => zoomAtCenter(1.25));
+  container.querySelector("#navZoomOutBtn")?.addEventListener("click", () => zoomAtCenter(0.8));
+  container.querySelector("#navFitMapBtn")?.addEventListener("click", () => resetView());
+  const themeBtn = container.querySelector("#navMapThemeBtn");
+  themeBtn?.addEventListener("click", () => {
+    mapLightTheme = !mapLightTheme;
+    themeBtn.textContent = mapLightTheme ? "暗底" : "亮底";
+    themeBtn.setAttribute("aria-pressed", mapLightTheme ? "true" : "false");
+    themeBtn.classList.toggle("active", mapLightTheme);
+    if (stageEl) stageEl.classList.toggle("nav-map-light", mapView === "occupancy2d" && mapLightTheme);
+    drawMap();
+  });
 
-  // Coordinate transforms
+  // Coordinate transforms (all in logical 1:1 CSS pixel space)
   function worldToImage(wx, wy) {
     const ih = mapImage && mapImage.naturalHeight ? mapImage.naturalHeight : mapYaml.height;
     const px = (wx - mapYaml.origin[0]) / mapYaml.resolution;
@@ -428,57 +653,139 @@ export function initNavigationTab(container) {
     return imageToCanvas(px, py);
   }
 
+  function pickNiceMetricStep(pxPerMeter, minPx = 56) {
+    const candidates = [0.25, 0.5, 1, 2, 5, 10, 20, 50];
+    for (const c of candidates) {
+      if (c * pxPerMeter >= minPx) return c;
+    }
+    return 50;
+  }
+
+  function drawRoundedRect(c, x, y, w, h, r) {
+    c.beginPath();
+    if (typeof c.roundRect === "function") {
+      c.roundRect(x, y, w, h, r);
+    } else {
+      c.rect(x, y, w, h);
+    }
+  }
+
   // Drawing
   let latestRobotPose = { x: 0, y: 0, yaw: 0 };
   let plannedPath = [];
 
   function drawMap() {
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
     ctx.save();
-    ctx.fillStyle = "#0f172a";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
+    ctx.clearRect(0, 0, viewW, viewH);
 
-    if (mapImage && mapImage.complete && mapImage.naturalWidth !== 0) {
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(mapImage, offsetX, offsetY, mapImage.naturalWidth * scale, mapImage.naturalHeight * scale);
+    const isLight = mapLightTheme;
+    const res = Number(mapYaml.resolution) || 0.05;
+    const pxPerMeter = scale / res;
+
+    // 1. Architectural Blueprint Canvas Backdrop
+    ctx.fillStyle = isLight ? "#f1f5f9" : "#0b1220";
+    ctx.fillRect(0, 0, viewW, viewH);
+
+    // 2. True-World Metric Coordinate Grid (1:1 isotropic meters)
+    const majorStepM = pickNiceMetricStep(pxPerMeter, 64);
+    const minorStepM = majorStepM / 2;
+    const topLeftW = imageToWorld((0 - offsetX) / scale, (0 - offsetY) / scale);
+    const botRightW = imageToWorld((viewW - offsetX) / scale, (viewH - offsetY) / scale);
+    const minWx = Math.min(topLeftW.wx, botRightW.wx);
+    const maxWx = Math.max(topLeftW.wx, botRightW.wx);
+    const minWy = Math.min(topLeftW.wy, botRightW.wy);
+    const maxWy = Math.max(topLeftW.wy, botRightW.wy);
+
+    if (minorStepM * pxPerMeter >= 20) {
+      ctx.strokeStyle = isLight ? "rgba(148, 163, 184, 0.16)" : "rgba(148, 163, 184, 0.07)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let wx = Math.floor(minWx / minorStepM) * minorStepM; wx <= maxWx; wx += minorStepM) {
+        const cx = Math.round(worldToCanvas(wx, 0).cx) + 0.5;
+        ctx.moveTo(cx, 0);
+        ctx.lineTo(cx, viewH);
+      }
+      for (let wy = Math.floor(minWy / minorStepM) * minorStepM; wy <= maxWy; wy += minorStepM) {
+        const cy = Math.round(worldToCanvas(0, wy).cy) + 0.5;
+        ctx.moveTo(0, cy);
+        ctx.lineTo(viewW, cy);
+      }
+      ctx.stroke();
     }
 
-    // Origin crosshair
-    const origC = worldToCanvas(0, 0);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.strokeStyle = isLight ? "rgba(100, 116, 139, 0.24)" : "rgba(148, 163, 184, 0.15)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(origC.cx - 10, origC.cy);
-    ctx.lineTo(origC.cx + 10, origC.cy);
-    ctx.moveTo(origC.cx, origC.cy - 10);
-    ctx.lineTo(origC.cx, origC.cy + 10);
+    for (let wx = Math.floor(minWx / majorStepM) * majorStepM; wx <= maxWx; wx += majorStepM) {
+      const cx = Math.round(worldToCanvas(wx, 0).cx) + 0.5;
+      ctx.moveTo(cx, 0);
+      ctx.lineTo(cx, viewH);
+    }
+    for (let wy = Math.floor(minWy / majorStepM) * majorStepM; wy <= maxWy; wy += majorStepM) {
+      const cy = Math.round(worldToCanvas(0, wy).cy) + 0.5;
+      ctx.moveTo(0, cy);
+      ctx.lineTo(viewW, cy);
+    }
     ctx.stroke();
 
-    // Draw saved waypoints on 2D map with readable pill tags
-    for (const wp of waypoints) {
-      const wC = worldToCanvas(wp.x, wp.y);
-      ctx.fillStyle = "rgba(168, 85, 247, 0.95)";
-      ctx.beginPath();
-      ctx.arc(wC.cx, wC.cy, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.font = "10px sans-serif";
-      const tw = ctx.measureText(wp.name).width;
-      ctx.fillStyle = "rgba(15, 23, 42, 0.82)";
-      ctx.fillRect(wC.cx + 7, wC.cy - 8, tw + 8, 15);
-      ctx.fillStyle = "#f3e8ff";
-      ctx.fillText(wp.name, wC.cx + 11, wC.cy + 3);
+    // 3. Re-colored High-Contrast Occupancy Floorplan (transparent unknown, crisp floor & walls)
+    if (mapImage && mapImage.complete && mapImage.naturalWidth !== 0) {
+      const styled = buildStyledMap(mapImage);
+      const mapSource = styled ? (isLight ? styled.light : styled.dark) : mapImage;
+      // Smooth when downscaled so thin 1px walls never drop out; crisp nearest-neighbor when inspecting cells zoomed-in
+      ctx.imageSmoothingEnabled = scale < 1.35;
+      if (ctx.imageSmoothingEnabled) ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(mapSource, offsetX, offsetY, mapImage.naturalWidth * scale, mapImage.naturalHeight * scale);
     }
 
-    // Draw planned path
+    // 4. Subtle World-Meter Axis Ruler Ticks (bottom & left margins)
+    ctx.font = "500 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = isLight ? "rgba(71, 85, 105, 0.72)" : "rgba(148, 163, 184, 0.58)";
+    ctx.textAlign = "center";
+    for (let wx = Math.floor(minWx / majorStepM) * majorStepM; wx <= maxWx; wx += majorStepM) {
+      const cx = worldToCanvas(wx, 0).cx;
+      if (cx > 235 && cx < viewW - 150) {
+        const label = Math.abs(wx) < 1e-6 ? "0m" : `${Number(wx.toFixed(1))}m`;
+        ctx.fillText(label, cx, viewH - 6);
+      }
+    }
+    ctx.textAlign = "left";
+    for (let wy = Math.floor(minWy / majorStepM) * majorStepM; wy <= maxWy; wy += majorStepM) {
+      const cy = worldToCanvas(0, wy).cy;
+      if (cy > 56 && cy < viewH - 44) {
+        const label = Math.abs(wy) < 1e-6 ? "0m" : `${Number(wy.toFixed(1))}m`;
+        ctx.fillText(label, 8, cy - 3);
+      }
+    }
+
+    // 5. World Origin Triad (0, 0) — Red +X / Green +Y
+    const origC = worldToCanvas(0, 0);
+    const axisLen = 20;
+    ctx.lineWidth = 1.8;
+    ctx.strokeStyle = "#ef4444";
+    ctx.beginPath();
+    ctx.moveTo(origC.cx, origC.cy);
+    ctx.lineTo(origC.cx + axisLen, origC.cy);
+    ctx.stroke();
+    ctx.strokeStyle = "#22c55e";
+    ctx.beginPath();
+    ctx.moveTo(origC.cx, origC.cy);
+    ctx.lineTo(origC.cx, origC.cy - axisLen);
+    ctx.stroke();
+    ctx.fillStyle = isLight ? "#0f172a" : "#f8fafc";
+    ctx.beginPath();
+    ctx.arc(origC.cx, origC.cy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 6. Planned Path (glow under-stroke + crisp dashed trajectory)
     if (plannedPath && plannedPath.length > 1) {
-      ctx.strokeStyle = "#38bdf8";
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([5, 4]);
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = isLight ? "rgba(2, 132, 199, 0.22)" : "rgba(56, 189, 248, 0.26)";
+      ctx.lineWidth = 7;
       ctx.beginPath();
       for (let i = 0; i < plannedPath.length; i++) {
         const pt = worldToCanvas(plannedPath[i][0], plannedPath[i][1]);
@@ -486,54 +793,169 @@ export function initNavigationTab(container) {
         else ctx.lineTo(pt.cx, pt.cy);
       }
       ctx.stroke();
+
+      ctx.strokeStyle = isLight ? "#0284c7" : "#38bdf8";
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([7, 5]);
+      ctx.stroke();
       ctx.setLineDash([]);
+      ctx.restore();
     }
 
-    // Draw goal pose
+    // 7. Saved Waypoints (crisp rounded glassmorphic pins)
+    ctx.font = "600 11px ui-sans-serif, system-ui, -apple-system, sans-serif";
+    ctx.textAlign = "left";
+    for (const wp of waypoints) {
+      const wC = worldToCanvas(wp.x, wp.y);
+      ctx.fillStyle = "rgba(168, 85, 247, 0.24)";
+      ctx.beginPath();
+      ctx.arc(wC.cx, wC.cy, 9, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#a855f7";
+      ctx.beginPath();
+      ctx.arc(wC.cx, wC.cy, 4.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+
+      const tw = ctx.measureText(wp.name).width;
+      const pillX = wC.cx + 9;
+      const pillY = wC.cy - 10;
+      const pillW = tw + 12;
+      const pillH = 20;
+      drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 5);
+      ctx.fillStyle = isLight ? "rgba(255, 255, 255, 0.92)" : "rgba(15, 23, 42, 0.86)";
+      ctx.fill();
+      ctx.strokeStyle = isLight ? "rgba(168, 85, 247, 0.45)" : "rgba(192, 132, 252, 0.45)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = isLight ? "#581c87" : "#f3e8ff";
+      ctx.fillText(wp.name, pillX + 6, pillY + 13.5);
+    }
+
+    // 8. Goal Pose Marker (amber target beacon + heading arrow)
     if (goalPose) {
       const gC = worldToCanvas(goalPose.x, goalPose.y);
+      const angle = -goalPose.yaw;
+
+      ctx.fillStyle = "rgba(245, 158, 11, 0.20)";
+      ctx.beginPath();
+      ctx.arc(gC.cx, gC.cy, 15, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(gC.cx, gC.cy, 11.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const tipX = gC.cx + Math.cos(angle) * 26;
+      const tipY = gC.cy + Math.sin(angle) * 26;
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 2.8;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(gC.cx, gC.cy);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = 7;
       ctx.fillStyle = "#f59e0b";
       ctx.beginPath();
-      ctx.arc(gC.cx, gC.cy, 7, 0, Math.PI * 2);
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - headLen * Math.cos(angle - 0.5), tipY - headLen * Math.sin(angle - 0.5));
+      ctx.lineTo(tipX - headLen * Math.cos(angle + 0.5), tipY - headLen * Math.sin(angle + 0.5));
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#f59e0b";
+      ctx.beginPath();
+      ctx.arc(gC.cx, gC.cy, 6, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 2;
       ctx.stroke();
-
-      const angle = -goalPose.yaw;
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(gC.cx, gC.cy);
-      ctx.lineTo(gC.cx + Math.cos(angle) * 22, gC.cy + Math.sin(angle) * 22);
-      ctx.stroke();
     }
 
-    // Draw robot pose
+    // 9. Robot Pose (true-scale physical chassis footprint ~0.68m diameter + sleek heading chevron)
     const rC = worldToCanvas(latestRobotPose.x, latestRobotPose.y);
-    ctx.fillStyle = "#14b8a6";
+    const rAngle = -latestRobotPose.yaw;
+    const chassisR = Math.max(9.5, Math.min(34, 0.34 * pxPerMeter));
+
+    ctx.fillStyle = "rgba(20, 184, 166, 0.18)";
     ctx.beginPath();
-    ctx.arc(rC.cx, rC.cy, 8, 0, Math.PI * 2);
+    ctx.arc(rC.cx, rC.cy, chassisR + 5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#ffffff";
+
+    ctx.fillStyle = "rgba(20, 184, 166, 0.28)";
+    ctx.beginPath();
+    ctx.arc(rC.cx, rC.cy, chassisR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#2dd4bf";
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    const rAngle = -latestRobotPose.yaw;
-    ctx.strokeStyle = "#14b8a6";
-    ctx.lineWidth = 3;
+    // Directional navigation chevron inside footprint
+    ctx.save();
+    ctx.translate(rC.cx, rC.cy);
+    ctx.rotate(rAngle);
+    const arrowR = Math.max(8, chassisR * 0.85);
+    ctx.fillStyle = "#14b8a6";
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.moveTo(rC.cx, rC.cy);
-    ctx.lineTo(rC.cx + Math.cos(rAngle) * 24, rC.cy + Math.sin(rAngle) * 24);
+    ctx.moveTo(arrowR + 3, 0);
+    ctx.lineTo(-arrowR * 0.65, -arrowR * 0.58);
+    ctx.lineTo(-arrowR * 0.28, 0);
+    ctx.lineTo(-arrowR * 0.65, arrowR * 0.58);
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
+    ctx.restore();
+
+    // 10. Dynamic CAD Metric Scale Bar (bottom-right, mathematically exact!)
+    const scaleMeters = pickNiceMetricStep(pxPerMeter, 72);
+    const barPx = Math.round(scaleMeters * pxPerMeter);
+    if (barPx >= 36 && barPx <= viewW * 0.36) {
+      const boxW = barPx + 22;
+      const boxH = 26;
+      const bx = viewW - boxW - 12;
+      const by = viewH - boxH - 12;
+      drawRoundedRect(ctx, bx, by, boxW, boxH, 6);
+      ctx.fillStyle = isLight ? "rgba(255, 255, 255, 0.90)" : "rgba(11, 18, 32, 0.84)";
+      ctx.fill();
+      ctx.strokeStyle = isLight ? "rgba(148, 163, 184, 0.45)" : "rgba(148, 163, 184, 0.24)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      const x0 = bx + 11;
+      const x1 = x0 + barPx;
+      const yBar = by + 18;
+      ctx.strokeStyle = isLight ? "#0f172a" : "#e2e8f0";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x0, yBar - 4);
+      ctx.lineTo(x0, yBar);
+      ctx.lineTo(x1, yBar);
+      ctx.lineTo(x1, yBar - 4);
+      ctx.stroke();
+
+      ctx.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.fillStyle = isLight ? "#0f172a" : "#e2e8f0";
+      ctx.textAlign = "center";
+      ctx.fillText(`${scaleMeters} m`, (x0 + x1) * 0.5, by + 12);
+    }
 
     ctx.restore();
   }
 
   function clientToCanvas(e) {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
-    const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+    const scaleX = rect.width > 0 ? viewW / rect.width : 1;
+    const scaleY = rect.height > 0 ? viewH / rect.height : 1;
     return {
       cx: (e.clientX - rect.left) * scaleX,
       cy: (e.clientY - rect.top) * scaleY,
@@ -564,7 +986,7 @@ export function initNavigationTab(container) {
   function onMapMouseMove(e) {
     if (!canvas) return;
     const { cx, cy } = clientToCanvas(e);
-    if (cx >= 0 && cx <= canvas.width && cy >= 0 && cy <= canvas.height) {
+    if (cx >= 0 && cx <= viewW && cy >= 0 && cy <= viewH) {
       const { px, py } = canvasToImage(cx, cy);
       const { wx, wy } = imageToWorld(px, py);
       const overlay = container.querySelector("#navCoordsOverlay");
@@ -935,11 +1357,13 @@ export function initNavigationTab(container) {
         };
       }
 
+      if (mapView === "occupancy2d") syncCanvasSize(false);
       drawMap();
       if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
     },
     destroy() {
       stopHold();
+      if (mapResizeObserver) mapResizeObserver.disconnect();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("blur", onWindowBlur);
       mapInteractions.destroy();
