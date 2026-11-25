@@ -4,6 +4,7 @@ import { occupancyToPointCloud, lumaFromRgba, MOCK_CLOUD_LABEL } from "../map-cl
 import { parsePcdBuffer, buildColoredPcdCloud, RECORDED_PCD_LABEL } from "../pcd-loader.js";
 import { createMapCloudViewer } from "../map-cloud-viewer.js";
 import { bindMapInteractions } from "../map-interactions.js";
+import { analyzeOccupancyGrid, queryCellInfo, castLidarScan, planGridPathAStar } from "../map-planner-2d.js";
 import { escapeHtml } from "../ui-format.js";
 import { notify } from "../notify.js";
 
@@ -93,23 +94,28 @@ export function initNavigationTab(container) {
           </div>
 
           <!-- Canvas Container -->
-          <p class="preview-field-note" id="mapCloudNote">2D 真实占用栅格 · 拖动仅设置本地目标；下发仍需显式操作与 Lease。</p>
-          <div id="navMapStage" class="nav-map-stage nav-map-light">
+          <p class="preview-field-note" id="mapCloudNote">2D 战术导航图 · 实时 Nav2 代价膨胀 + 激光扫描 + A* 避障路径预览；下发仍需显式操作与 Lease。</p>
+          <div id="navMapStage" class="nav-map-stage">
             <canvas id="navMapCanvas" width="760" height="540" style="width:100%; height:100%; display:block; cursor:crosshair;"></canvas>
             <canvas id="navCloudCanvas" class="nav-cloud-canvas" width="760" height="540" hidden></canvas>
             <div id="nav2dToolbar" class="nav-2d-toolbar" role="toolbar" aria-label="2D 地图视图控制">
               <button type="button" class="nav-map-tool-btn" id="navZoomInBtn" title="放大地图 (+)">＋</button>
               <button type="button" class="nav-map-tool-btn" id="navZoomOutBtn" title="缩小地图 (-)">－</button>
-              <button type="button" class="nav-map-tool-btn" id="navFitMapBtn" title="1:1 等比自适应完整建图区域">适应画面</button>
+              <button type="button" class="nav-map-tool-btn" id="navFitMapBtn" title="1:1 等比自适应完整建图区域">适应</button>
+              <span class="nav-tool-sep" aria-hidden="true"></span>
+              <button type="button" class="nav-map-tool-btn active" id="navCostmapBtn" aria-pressed="true" title="显示/隐藏 Nav2 障碍物膨胀代价层">代价层</button>
+              <button type="button" class="nav-map-tool-btn active" id="navLidarBtn" aria-pressed="true" title="显示/隐藏 360° 实时激光扫描与前视相机视锥">雷达</button>
+              <button type="button" class="nav-map-tool-btn" id="navMeasureBtn" aria-pressed="false" title="两点物理测距工具 (按 Esc 退出)">测距</button>
               <button type="button" class="nav-map-tool-btn" id="navMapGridBtn" aria-pressed="false" title="显示/隐藏世界坐标米制网格">网格</button>
-              <button type="button" class="nav-map-tool-btn" id="navMapThemeBtn" aria-pressed="false" title="切换浅色室内平面图 / 深色夜间图">暗底</button>
+              <button type="button" class="nav-map-tool-btn" id="navMapThemeBtn" aria-pressed="false" title="切换深色战术图 / 浅色室内图">亮底</button>
             </div>
+            <div id="navRouteBanner" class="nav-route-pill" hidden></div>
             <div id="navCloudHud" class="nav-cloud-hud" hidden></div>
             <div class="nav-map-overlay-chip" id="navCoordsOverlay">
-              X: 0.00m | Y: 0.00m | Goal Yaw: 0°
+              X: 0.00m | Y: 0.00m | 悬停探测壁距
             </div>
             <div id="navMapLegend" class="nav-map-legend">
-              <div>青色：当前位姿 · 橙色：本地目标 · 蓝色虚线：规划路径</div>
+              <div>青色：位姿/雷达 · 红蓝环：Nav2 代价层 · 橙色：目标</div>
             </div>
           </div>
 
@@ -240,9 +246,20 @@ export function initNavigationTab(container) {
   let viewH = 540;
   let canvasDpr = 1;
   let hasFittedInitialView = false;
-  let mapLightTheme = true;
+  let mapLightTheme = false;
   let mapGridEnabled = false;
-  let styledMapCache = { key: null, dark: null, light: null, bounds: null };
+  let costmapEnabled = true;
+  let lidarEnabled = true;
+  let measureMode = false;
+  let measurePoints = []; // up to 2 points [{ wx, wy }]
+  let measureHover = null; // { wx, wy }
+  let previewRoute = null; // { ok, reason, pointsWorld, lengthM, minClearanceM, etaS }
+  let lastRouteKey = null;
+  let lidarCache = { key: null, rays: [] };
+  let animRafId = null;
+  let animPhase = 0;
+  let lastAnimTs = 0;
+  let styledMapCache = { key: null, dark: null, light: null, bounds: null, grid: null };
   let scale = 1.0;
   let offsetX = 100;
   let offsetY = 50;
@@ -257,8 +274,9 @@ export function initNavigationTab(container) {
 
   function buildStyledMap(img) {
     if (!img || !img.complete || !img.naturalWidth || !img.naturalHeight) return null;
-    const key = `${activeMap?.id || ""}|${img.src}|${img.naturalWidth}x${img.naturalHeight}`;
-    if (styledMapCache.key === key && styledMapCache.dark && styledMapCache.light) {
+    const res = Number(mapYaml.resolution) || 0.05;
+    const key = `${activeMap?.id || ""}|${img.src}|${img.naturalWidth}x${img.naturalHeight}|${res}`;
+    if (styledMapCache.key === key && styledMapCache.dark && styledMapCache.light && styledMapCache.grid) {
       return styledMapCache;
     }
     const w = img.naturalWidth;
@@ -270,58 +288,14 @@ export function initNavigationTab(container) {
     pctx.drawImage(img, 0, 0);
     const src = pctx.getImageData(0, 0, w, h).data;
 
-    // 1. Parse ROS map_saver trinary cells (0=unknown, 1=free, 2=occupied)
-    const rawCls = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) {
-      const p = i * 4;
-      const luma = (src[p] + src[p + 1] + src[p + 2]) / 3;
-      if (luma <= 90) rawCls[i] = 2;
-      else if (luma >= 235) rawCls[i] = 1;
-      else rawCls[i] = 0;
-    }
+    // 1. Analyze ROS occupancy grid + exact 2-pass Chamfer Euclidean Distance Transform (meters to nearest wall)
+    const grid = analyzeOccupancyGrid(src, w, h, res);
+    const { cls, distM, bounds } = grid;
 
-    // 2. Light morphological denoising (physically faithful: seals 1px floor pinholes & orphan 1px dust, never alters real walls!)
-    const cls = new Uint8Array(rawCls);
-    let minX = w, minY = h, maxX = -1, maxY = -1;
-    for (let y = 1; y < h - 1; y++) {
-      const row = y * w;
-      for (let x = 1; x < w - 1; x++) {
-        const idx = row + x;
-        const c = rawCls[idx];
-        let freeN = 0;
-        let wallN = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          const nr = (y + dy) * w;
-          for (let dx = -1; dx <= 1; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const nc = rawCls[nr + x + dx];
-            if (nc === 1) freeN++;
-            else if (nc === 2) wallN++;
-          }
-        }
-        if (c === 0 && freeN >= 5 && wallN === 0) {
-          cls[idx] = 1; // seal 1px interior unknown pinhole
-        } else if (c === 2 && wallN === 0 && freeN >= 6) {
-          cls[idx] = 1; // remove isolated 1px orphan LiDAR speck floating in open space
-        }
-      }
-    }
-    for (let y = 0; y < h; y++) {
-      const row = y * w;
-      for (let x = 0; x < w; x++) {
-        if (cls[row + x] !== 0) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-    const bounds = maxX >= minX && maxY >= minY
-      ? { minX, minY, maxX, maxY, width: maxX - minX + 1, height: maxY - minY + 1 }
-      : { minX: 0, minY: 0, maxX: w - 1, maxY: h - 1, width: w, height: h };
-
-    // 3. Build separate architectural Floor Silhouette & Anti-Aliased Cohesive Wall layers per theme
+    // 2. Precompute 3 crisp layered offscreen textures per theme:
+    //    - floor: EDT ambient-occlusion shaded architectural slab
+    //    - costmap: Nav2 lethal chassis radius (<=0.34m) + smooth inflation field (0.34m..0.90m)
+    //    - wall: 2.5D extruded wall relief (drop extrusion + bright top cap)
     const makeLayers = (isLight) => {
       const floorCanvas = document.createElement("canvas");
       floorCanvas.width = w;
@@ -330,6 +304,13 @@ export function initNavigationTab(container) {
       const floorImg = fctx.createImageData(w, h);
       const fdst = floorImg.data;
 
+      const costCanvas = document.createElement("canvas");
+      costCanvas.width = w;
+      costCanvas.height = h;
+      const cctx = costCanvas.getContext("2d");
+      const costImg = cctx.createImageData(w, h);
+      const cdst = costImg.data;
+
       const wallCanvas = document.createElement("canvas");
       wallCanvas.width = w;
       wallCanvas.height = h;
@@ -337,66 +318,111 @@ export function initNavigationTab(container) {
       const wallImg = wctx.createImageData(w, h);
       const wdst = wallImg.data;
 
-      // Light Architectural Indoor Map (Apple Indoor / Motphys Loop): alabaster floor + soft charcoal walls
-      // Dark Telemetry Indoor Map (Modern Matte): deep slate floor + crisp ice-slate walls with subtle teal rim
-      const flR = isLight ? 255 : 27;
-      const flG = isLight ? 255 : 41;
-      const flB = isLight ? 255 : 61;
-
-      const wlR = isLight ? 30 : 219;
-      const wlG = isLight ? 41 : 234;
-      const wlB = isLight ? 59 : 254;
-
-      const rimR = isLight ? 51 : 56;
-      const rimG = isLight ? 65 : 189;
-      const rimB = isLight ? 85 : 248;
-      const rimA = isLight ? 108 : 102;
-
       for (let y = 0; y < h; y++) {
         const row = y * w;
         for (let x = 0; x < w; x++) {
           const idx = row + x;
           const p = idx * 4;
           const c = cls[idx];
+          const d = distM[idx];
 
-          // Floor layer (explored free + wall footprint, softly feathered on unknown edge)
+          // Layer A: Floor with subtle EDT ambient-occlusion shading (darker near walls, brighter in open atrium)
           if (c !== 0) {
             let unkN = 0;
             if (x > 0 && cls[idx - 1] === 0) unkN++;
             if (x + 1 < w && cls[idx + 1] === 0) unkN++;
             if (y > 0 && cls[idx - w] === 0) unkN++;
             if (y + 1 < h && cls[idx + w] === 0) unkN++;
-            fdst[p] = flR;
-            fdst[p + 1] = flG;
-            fdst[p + 2] = flB;
-            fdst[p + 3] = unkN >= 3 ? 175 : 255;
+
+            const ao = Math.min(1, d / 2.2); // 0 right against wall -> 1 in open corridor/hall
+            if (isLight) {
+              fdst[p] = Math.round(239 + ao * 16);
+              fdst[p + 1] = Math.round(244 + ao * 11);
+              fdst[p + 2] = Math.round(250 + ao * 5);
+            } else {
+              fdst[p] = Math.round(18 + ao * 14);
+              fdst[p + 1] = Math.round(29 + ao * 19);
+              fdst[p + 2] = Math.round(47 + ao * 26);
+            }
+            fdst[p + 3] = unkN >= 3 ? 170 : 255;
+
+            // Layer B: Real Nav2 Obstacle Inflation Costmap on navigable free space
+            if (c === 1 && d > 0 && d <= 0.90) {
+              if (d <= 0.34) {
+                // Lethal chassis footprint buffer (R1 Pro radius ~0.34m)
+                const k = 1 - d / 0.34;
+                if (isLight) {
+                  cdst[p] = 225;
+                  cdst[p + 1] = 29;
+                  cdst[p + 2] = 72;
+                  cdst[p + 3] = Math.round(32 + k * 66);
+                } else {
+                  cdst[p] = 244;
+                  cdst[p + 1] = 63;
+                  cdst[p + 2] = 94;
+                  cdst[p + 3] = Math.round(48 + k * 92);
+                }
+              } else {
+                // Smooth Nav2 clearance inflation decay (0.34m .. 0.90m)
+                const t = 1 - (d - 0.34) / 0.56;
+                const e = t * t;
+                const onIso = Math.abs(d - 0.38) < res * 0.72;
+                if (isLight) {
+                  cdst[p] = onIso ? 99 : Math.round(56 + t * 43);
+                  cdst[p + 1] = onIso ? 102 : Math.round(130 - t * 28);
+                  cdst[p + 2] = onIso ? 241 : Math.round(246 - t * 5);
+                  cdst[p + 3] = onIso ? 86 : Math.round(e * 62);
+                } else {
+                  cdst[p] = onIso ? 129 : Math.round(38 + t * 72);
+                  cdst[p + 1] = onIso ? 140 : Math.round(166 - t * 62);
+                  cdst[p + 2] = onIso ? 248 : Math.round(245);
+                  cdst[p + 3] = onIso ? 102 : Math.round(e * 86);
+                }
+              }
+            }
           }
 
-          // Cohesive architectural wall layer (solid core + soft 1px anti-aliased bevel)
+          // Layer C: 2.5D Extruded Architectural Walls (offset base extrusion + luminous crisp cap)
           if (c === 2) {
-            wdst[p] = wlR;
-            wdst[p + 1] = wlG;
-            wdst[p + 2] = wlB;
-            wdst[p + 3] = 248;
+            const topEdge = y > 0 && cls[idx - w] !== 2;
+            if (isLight) {
+              wdst[p] = topEdge ? 51 : 24;
+              wdst[p + 1] = topEdge ? 65 : 35;
+              wdst[p + 2] = topEdge ? 85 : 52;
+              wdst[p + 3] = 252;
+            } else {
+              wdst[p] = topEdge ? 248 : 210;
+              wdst[p + 1] = topEdge ? 250 : 228;
+              wdst[p + 2] = topEdge ? 252 : 248;
+              wdst[p + 3] = 252;
+            }
           } else {
-            const adj4 =
+            // Subtle 2.5D drop-extrusion right below/right of wall pixels + crisp anti-aliased wall bevel
+            const wallAbove = (y > 0 && cls[idx - w] === 2) || (y > 1 && x > 0 && cls[idx - w - 1] === 2);
+            const wallAdj =
               (x > 0 && cls[idx - 1] === 2) ||
               (x + 1 < w && cls[idx + 1] === 2) ||
               (y > 0 && cls[idx - w] === 2) ||
               (y + 1 < h && cls[idx + w] === 2);
-            if (adj4) {
-              wdst[p] = rimR;
-              wdst[p + 1] = rimG;
-              wdst[p + 2] = rimB;
-              wdst[p + 3] = rimA;
+            if (wallAbove) {
+              wdst[p] = isLight ? 15 : 2;
+              wdst[p + 1] = isLight ? 23 : 6;
+              wdst[p + 2] = isLight ? 42 : 16;
+              wdst[p + 3] = isLight ? 92 : 175;
+            } else if (wallAdj) {
+              wdst[p] = isLight ? 51 : 56;
+              wdst[p + 1] = isLight ? 65 : 189;
+              wdst[p + 2] = isLight ? 85 : 248;
+              wdst[p + 3] = isLight ? 78 : 96;
             }
           }
         }
       }
 
       fctx.putImageData(floorImg, 0, 0);
+      cctx.putImageData(costImg, 0, 0);
       wctx.putImageData(wallImg, 0, 0);
-      return { floor: floorCanvas, wall: wallCanvas };
+      return { floor: floorCanvas, costmap: costCanvas, wall: wallCanvas };
     };
 
     styledMapCache = {
@@ -404,7 +430,10 @@ export function initNavigationTab(container) {
       dark: makeLayers(false),
       light: makeLayers(true),
       bounds,
+      grid,
     };
+    lidarCache = { key: null, rays: [] };
+    lastRouteKey = null;
     updateResolutionBadge();
     return styledMapCache;
   }
@@ -457,12 +486,17 @@ export function initNavigationTab(container) {
   if (mapResizeObserver && stageEl) mapResizeObserver.observe(stageEl);
 
   function load2DImage(url) {
-    styledMapCache = { key: null, dark: null, light: null, bounds: null };
+    styledMapCache = { key: null, dark: null, light: null, bounds: null, grid: null };
+    lidarCache = { key: null, rays: [] };
+    previewRoute = null;
+    lastRouteKey = null;
     hasFittedInitialView = false;
+    updateRouteBanner();
     mapImage = new Image();
     mapImage.src = url;
     mapImage.onload = () => {
       buildStyledMap(mapImage);
+      recomputePreviewRoute(true);
       syncCanvasSize(true);
       drawMap();
       if (mapView === "cloud3d") ensureActiveCloud(false);
@@ -550,12 +584,12 @@ export function initNavigationTab(container) {
       ? (isRealPcd
           ? `${activeMap.pointcloud.label}。旋转/缩放仅观察相机，不改变目标；目标选点请在 2D 视图操作。`
           : MOCK_CLOUD_LABEL + " 旋转/缩放仅观察相机，不改变目标；目标选点仅在2D视图。")
-      : `2D 真实占用栅格 (${activeMap?.id || "map"} · ${mapYaml.resolution}m/pix · 1:1 真实物理比例) · 左键拖拽设目标，右键/Shift 平移，滚轮缩放。`;
+      : `2D 战术导航图 (${activeMap?.id || "map"} · ${mapYaml.resolution}m/pix · 1:1 真实物理比例) · 左键拖拽设目标并实时预览 A* 避障路径，右键/Shift 平移，滚轮缩放。`;
     container.querySelector("#navMapLegend").innerHTML = threeD
       ? (isRealPcd
           ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>"
           : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>")
-      : "<div><span style=\"color:#2dd4bf;\">●</span> 机器人位姿 · <span style=\"color:#f59e0b;\">●</span> 导航目标 · <span style=\"color:#c084fc;\">●</span> 常用航点</div><div><span style=\"color:#38bdf8;\">- -</span> 规划路径 · 实测 1:1 物理比例尺</div>";
+      : "<div><span style=\"color:#2dd4bf;\">●</span> 位姿/激光雷达 · <span style=\"color:#f43f5e;\">■</span><span style=\"color:#818cf8;\">■</span> Nav2 膨胀代价层</div><div><span style=\"color:#38bdf8;\">➤</span> A* 避障路径 · <span style=\"color:#f59e0b;\">◎</span> 目标 · <span style=\"color:#c084fc;\">●</span> 航点</div>";
   }
 
   function setMapView(next) {
@@ -572,18 +606,23 @@ export function initNavigationTab(container) {
     container.querySelector("#navCoordsOverlay").hidden = threeD;
     const tb2d = container.querySelector("#nav2dToolbar");
     if (tb2d) tb2d.hidden = threeD;
+    const bannerEl = container.querySelector("#navRouteBanner");
+    if (bannerEl) bannerEl.hidden = threeD || !goalPose || !previewRoute;
     container.querySelector("#navCloudControls").hidden = !(threeD && isRealPcd);
     if (stageEl) stageEl.classList.toggle("nav-map-light", !threeD && mapLightTheme);
     updateMapNotes();
     if (threeD) {
+      stopAnimLoop();
       ensureActiveCloud(false);
       cloudViewer.resize();
       cloudViewer.setActive(true);
-      cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
+      const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
+      cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
     } else {
       cloudViewer.setActive(false);
       syncCanvasSize(false);
       drawMap();
+      syncAnimLoop();
     }
   }
   container.querySelectorAll("[data-map-view]").forEach(btn => btn.addEventListener("click", () => setMapView(btn.dataset.mapView)));
@@ -645,6 +684,40 @@ export function initNavigationTab(container) {
   container.querySelector("#navZoomInBtn")?.addEventListener("click", () => zoomAtCenter(1.25));
   container.querySelector("#navZoomOutBtn")?.addEventListener("click", () => zoomAtCenter(0.8));
   container.querySelector("#navFitMapBtn")?.addEventListener("click", () => resetView());
+
+  const costmapBtn = container.querySelector("#navCostmapBtn");
+  costmapBtn?.addEventListener("click", () => {
+    costmapEnabled = !costmapEnabled;
+    costmapBtn.setAttribute("aria-pressed", costmapEnabled ? "true" : "false");
+    costmapBtn.classList.toggle("active", costmapEnabled);
+    drawMap();
+  });
+
+  const lidarBtn = container.querySelector("#navLidarBtn");
+  lidarBtn?.addEventListener("click", () => {
+    lidarEnabled = !lidarEnabled;
+    lidarBtn.setAttribute("aria-pressed", lidarEnabled ? "true" : "false");
+    lidarBtn.classList.toggle("active", lidarEnabled);
+    drawMap();
+    syncAnimLoop();
+  });
+
+  const measureBtn = container.querySelector("#navMeasureBtn");
+  function setMeasureMode(next) {
+    measureMode = !!next;
+    if (!measureMode) {
+      measurePoints = [];
+      measureHover = null;
+    }
+    if (measureBtn) {
+      measureBtn.setAttribute("aria-pressed", measureMode ? "true" : "false");
+      measureBtn.classList.toggle("active-measure", measureMode);
+    }
+    if (canvas) canvas.style.cursor = measureMode ? "cell" : "crosshair";
+    drawMap();
+  }
+  measureBtn?.addEventListener("click", () => setMeasureMode(!measureMode));
+
   const gridBtn = container.querySelector("#navMapGridBtn");
   gridBtn?.addEventListener("click", () => {
     mapGridEnabled = !mapGridEnabled;
@@ -656,8 +729,8 @@ export function initNavigationTab(container) {
   themeBtn?.addEventListener("click", () => {
     mapLightTheme = !mapLightTheme;
     themeBtn.textContent = mapLightTheme ? "暗底" : "亮底";
-    themeBtn.setAttribute("aria-pressed", mapLightTheme ? "false" : "true");
-    themeBtn.classList.toggle("active", !mapLightTheme);
+    themeBtn.setAttribute("aria-pressed", mapLightTheme ? "true" : "false");
+    themeBtn.classList.toggle("active", mapLightTheme);
     if (stageEl) stageEl.classList.toggle("nav-map-light", mapView === "occupancy2d" && mapLightTheme);
     drawMap();
   });
@@ -707,9 +780,194 @@ export function initNavigationTab(container) {
     }
   }
 
-  // Drawing
+  // Drawing & Real-Time Tactical Overlays
   let latestRobotPose = { x: 0, y: 0, yaw: 0 };
   let plannedPath = [];
+
+  function updateRouteBanner() {
+    const banner = container.querySelector("#navRouteBanner");
+    if (!banner) return;
+    if (mapView !== "occupancy2d" || !goalPose || !previewRoute) {
+      banner.hidden = true;
+      banner.classList.remove("is-blocked");
+      return;
+    }
+    banner.hidden = false;
+    if (previewRoute.ok) {
+      banner.classList.remove("is-blocked");
+      const modeLabel = plannedPath && plannedPath.length > 1 ? "导航执行路径" : "A* 避障路径预览";
+      const clrVal = Number(previewRoute.minClearanceM || 0);
+      const clrCls = clrVal < 0.34 ? "nrp-clr-tight" : clrVal >= 0.5 ? "nrp-clr-safe" : "";
+      banner.innerHTML = `<span class="nrp-dot"></span><span>${modeLabel} </span><strong>${previewRoute.lengthM.toFixed(1)} m</strong><span class="nrp-sep"> · </span><span>预计 ${Math.max(1, Math.round(previewRoute.etaS))} s</span><span class="nrp-sep"> · </span><span>最小壁距 <strong class="${clrCls}">${clrVal.toFixed(2)} m</strong></span>`;
+    } else {
+      banner.classList.add("is-blocked");
+      const msg = previewRoute.reason === "goal_in_obstacle"
+        ? "目标位于墙体障碍物内 · 请拖拽至蓝色安全通行区"
+        : "目标暂不可达（通道被阻断或超出已建图区域）";
+      banner.innerHTML = `<span class="nrp-dot"></span><span>${msg}</span>`;
+    }
+  }
+
+  function recomputePreviewRoute(force = false) {
+    if (!goalPose || !styledMapCache.grid) {
+      previewRoute = null;
+      lastRouteKey = null;
+      updateRouteBanner();
+      return;
+    }
+    const rImg = worldToImage(latestRobotPose.x, latestRobotPose.y);
+    const gImg = worldToImage(goalPose.x, goalPose.y);
+    const key = `${styledMapCache.key}|${Math.round(rImg.px / 3)},${Math.round(rImg.py / 3)}->${Math.round(gImg.px)},${Math.round(gImg.py)}`;
+    if (!force && key === lastRouteKey && previewRoute) return;
+    lastRouteKey = key;
+
+    const res = planGridPathAStar(styledMapCache.grid, rImg.px, rImg.py, gImg.px, gImg.py, {
+      robotRadiusM: 0.24,
+      safeClearM: 0.72,
+      maxExpanded: 70000,
+    });
+    if (res.ok) {
+      const pointsWorld = res.pointsPx.map(([px, py]) => {
+        const w = imageToWorld(px, py);
+        return [w.wx, w.wy];
+      });
+      previewRoute = {
+        ok: true,
+        pointsWorld,
+        lengthM: res.lengthM,
+        minClearanceM: res.minClearanceM,
+        etaS: res.lengthM / 0.55,
+      };
+    } else {
+      previewRoute = {
+        ok: false,
+        reason: res.reason,
+        pointsWorld: [],
+        lengthM: 0,
+        minClearanceM: 0,
+        etaS: 0,
+      };
+    }
+    updateRouteBanner();
+    syncAnimLoop();
+  }
+
+  function getCachedLidarRays(grid) {
+    if (!grid) return [];
+    const rImg = worldToImage(latestRobotPose.x, latestRobotPose.y);
+    const key = `${styledMapCache.key}|${Math.round(rImg.px * 2)},${Math.round(rImg.py * 2)},${Math.round(latestRobotPose.yaw * 40)}`;
+    if (lidarCache.key === key) return lidarCache.rays;
+    const rays = castLidarScan(grid, rImg.px, rImg.py, latestRobotPose.yaw, {
+      rays: 120,
+      maxRangeM: 12.0,
+    });
+    lidarCache = { key, rays };
+    return rays;
+  }
+
+  function stopAnimLoop() {
+    if (animRafId !== null) {
+      cancelAnimationFrame(animRafId);
+      animRafId = null;
+    }
+  }
+
+  function shouldAnimate2d() {
+    if (!mapSupported || mapView !== "occupancy2d" || document.hidden) return false;
+    if (!container.classList.contains("active")) return false;
+    return lidarEnabled || (plannedPath && plannedPath.length > 1) || !!(previewRoute && previewRoute.ok) || !!goalPose;
+  }
+
+  function animTick(ts) {
+    if (!shouldAnimate2d()) {
+      animRafId = null;
+      return;
+    }
+    if (ts - lastAnimTs >= 42) {
+      const dt = lastAnimTs ? Math.min(0.12, (ts - lastAnimTs) / 1000) : 0.042;
+      lastAnimTs = ts;
+      animPhase = (animPhase + dt) % 1000;
+      drawMap();
+    }
+    animRafId = requestAnimationFrame(animTick);
+  }
+
+  function syncAnimLoop() {
+    if (shouldAnimate2d()) {
+      if (animRafId === null) {
+        lastAnimTs = 0;
+        animRafId = requestAnimationFrame(animTick);
+      }
+    } else {
+      stopAnimLoop();
+    }
+  }
+
+  function drawAnimatedRoute(points, { isActiveNav, isLight }) {
+    if (!points || points.length < 2) return;
+    const pts = points.map(([wx, wy]) => worldToCanvas(wx, wy));
+
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    // Soft outer halo glow
+    ctx.strokeStyle = isActiveNav
+      ? (isLight ? "rgba(13, 148, 136, 0.22)" : "rgba(45, 212, 191, 0.24)")
+      : (isLight ? "rgba(2, 132, 199, 0.20)" : "rgba(56, 189, 248, 0.24)");
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].cx, pts[0].cy);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].cx, pts[i].cy);
+    ctx.stroke();
+
+    // Base continuous ribbon
+    ctx.strokeStyle = isActiveNav
+      ? (isLight ? "rgba(13, 148, 136, 0.45)" : "rgba(45, 212, 191, 0.45)")
+      : (isLight ? "rgba(2, 132, 199, 0.36)" : "rgba(56, 189, 248, 0.40)");
+    ctx.lineWidth = 3.2;
+    ctx.stroke();
+
+    // Marching luminous flow dashes
+    ctx.strokeStyle = isActiveNav
+      ? (isLight ? "#0d9488" : "#5eead4")
+      : (isLight ? "#0284c7" : "#7dd3fc");
+    ctx.lineWidth = 2.4;
+    ctx.setLineDash([8, 8]);
+    ctx.lineDashOffset = -(animPhase * 28);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Directional flow chevrons every ~46px along path
+    let acc = (animPhase * 28) % 46;
+    ctx.strokeStyle = isLight ? "#ffffff" : "#e0f2fe";
+    ctx.lineWidth = 1.7;
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].cx - pts[i - 1].cx;
+      const dy = pts[i].cy - pts[i - 1].cy;
+      const seg = Math.hypot(dx, dy);
+      if (seg < 1e-3) continue;
+      let d = 46 - acc;
+      while (d <= seg) {
+        const t = d / seg;
+        const x = pts[i - 1].cx + dx * t;
+        const y = pts[i - 1].cy + dy * t;
+        const ang = Math.atan2(dy, dx);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        ctx.moveTo(-4, -3.6);
+        ctx.lineTo(2.4, 0);
+        ctx.lineTo(-4, 3.6);
+        ctx.stroke();
+        ctx.restore();
+        d += 46;
+      }
+      acc = (acc + seg) % 46;
+    }
+    ctx.restore();
+  }
 
   function drawMap() {
     if (!ctx) return;
@@ -721,22 +979,23 @@ export function initNavigationTab(container) {
     const res = Number(mapYaml.resolution) || 0.05;
     const pxPerMeter = scale / res;
 
-    // 1. Calm Matte Architectural Canvas Backdrop (Apple Indoor / Modern Fleet Map aesthetic — zero harsh grid clash!)
+    // 1. Sleek Tactical Matte Backdrop (Deep Obsidian Slate default / Cool Matte Light)
     const bgGrad = ctx.createRadialGradient(
-      viewW * 0.5, viewH * 0.45, Math.min(viewW, viewH) * 0.1,
+      viewW * 0.5, viewH * 0.46, Math.min(viewW, viewH) * 0.08,
       viewW * 0.5, viewH * 0.5, Math.max(viewW, viewH) * 0.78
     );
     if (isLight) {
       bgGrad.addColorStop(0, "#eff3f8");
-      bgGrad.addColorStop(1, "#e3e9f0");
+      bgGrad.addColorStop(1, "#dfe6ef");
     } else {
-      bgGrad.addColorStop(0, "#121c2e");
-      bgGrad.addColorStop(1, "#090f1a");
+      bgGrad.addColorStop(0, "#0f1a2d");
+      bgGrad.addColorStop(0.65, "#09111f");
+      bgGrad.addColorStop(1, "#050912");
     }
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, viewW, viewH);
 
-    // 2. Optional True-World Metric Grid (off by default for clean indoor map presentation; toggleable via '网格')
+    // 2. Optional True-World Metric Grid (toggleable via '网格')
     const majorStepM = pickNiceMetricStep(pxPerMeter, 72);
     const minorStepM = majorStepM / 2;
     const topLeftW = imageToWorld((0 - offsetX) / scale, (0 - offsetY) / scale);
@@ -748,7 +1007,7 @@ export function initNavigationTab(container) {
 
     if (mapGridEnabled) {
       if (minorStepM * pxPerMeter >= 24) {
-        ctx.strokeStyle = isLight ? "rgba(100, 116, 139, 0.10)" : "rgba(148, 163, 184, 0.06)";
+        ctx.strokeStyle = isLight ? "rgba(100, 116, 139, 0.10)" : "rgba(148, 163, 184, 0.055)";
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let wx = Math.floor(minWx / minorStepM) * minorStepM; wx <= maxWx; wx += minorStepM) {
@@ -763,7 +1022,7 @@ export function initNavigationTab(container) {
         }
         ctx.stroke();
       }
-      ctx.strokeStyle = isLight ? "rgba(100, 116, 139, 0.20)" : "rgba(148, 163, 184, 0.14)";
+      ctx.strokeStyle = isLight ? "rgba(100, 116, 139, 0.20)" : "rgba(148, 163, 184, 0.13)";
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let wx = Math.floor(minWx / majorStepM) * majorStepM; wx <= maxWx; wx += majorStepM) {
@@ -779,9 +1038,11 @@ export function initNavigationTab(container) {
       ctx.stroke();
     }
 
-    // 3. Layered Architectural Indoor Floorplan (Soft-Shadow Floor Slab + Smooth Cohesive Walls)
+    // 3. Three-Layer Architectural Floor + Real Nav2 EDT Costmap + 2.5D Extruded Walls
+    let activeGrid = null;
     if (mapImage && mapImage.complete && mapImage.naturalWidth !== 0) {
       const styled = buildStyledMap(mapImage);
+      activeGrid = styled?.grid || null;
       const layers = styled ? (isLight ? styled.light : styled.dark) : null;
       const drawW = mapImage.naturalWidth * scale;
       const drawH = mapImage.naturalHeight * scale;
@@ -789,30 +1050,35 @@ export function initNavigationTab(container) {
       if (ctx.imageSmoothingEnabled) ctx.imageSmoothingQuality = "high";
 
       if (layers && layers.floor && layers.wall) {
-        // Layer A: Elevated smooth floor silhouette with gentle architectural drop-shadow
+        // Layer A: Elevated ambient-occlusion floor slab with soft shadow
         ctx.save();
-        ctx.shadowColor = isLight ? "rgba(15, 23, 42, 0.11)" : "rgba(0, 0, 0, 0.48)";
-        ctx.shadowBlur = isLight ? 16 : 20;
+        ctx.shadowColor = isLight ? "rgba(15, 23, 42, 0.12)" : "rgba(0, 0, 0, 0.62)";
+        ctx.shadowBlur = isLight ? 16 : 24;
         ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = isLight ? 4 : 6;
+        ctx.shadowOffsetY = isLight ? 4 : 7;
         ctx.drawImage(layers.floor, offsetX, offsetY, drawW, drawH);
         ctx.restore();
 
-        // Layer B: Crisp anti-aliased cohesive architectural walls on top
+        // Layer B: Real Nav2 Obstacle Inflation & Clearance Costmap (toggleable)
+        if (costmapEnabled && layers.costmap) {
+          ctx.drawImage(layers.costmap, offsetX, offsetY, drawW, drawH);
+        }
+
+        // Layer C: 2.5D Extruded Architectural Walls
         ctx.drawImage(layers.wall, offsetX, offsetY, drawW, drawH);
       } else {
         ctx.drawImage(mapImage, offsetX, offsetY, drawW, drawH);
       }
     }
 
-    // 4. Optional World-Meter Axis Ruler Ticks (only shown when metric grid is enabled)
+    // 4. Optional World-Meter Axis Ruler Ticks (only when metric grid is enabled)
     if (mapGridEnabled) {
       ctx.font = "500 10px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.fillStyle = isLight ? "rgba(71, 85, 105, 0.72)" : "rgba(148, 163, 184, 0.58)";
       ctx.textAlign = "center";
       for (let wx = Math.floor(minWx / majorStepM) * majorStepM; wx <= maxWx; wx += majorStepM) {
         const cx = worldToCanvas(wx, 0).cx;
-        if (cx > 235 && cx < viewW - 150) {
+        if (cx > 260 && cx < viewW - 155) {
           const label = Math.abs(wx) < 1e-6 ? "0m" : `${Number(wx.toFixed(1))}m`;
           ctx.fillText(label, cx, viewH - 6);
         }
@@ -820,117 +1086,224 @@ export function initNavigationTab(container) {
       ctx.textAlign = "left";
       for (let wy = Math.floor(minWy / majorStepM) * majorStepM; wy <= maxWy; wy += majorStepM) {
         const cy = worldToCanvas(0, wy).cy;
-        if (cy > 56 && cy < viewH - 44) {
+        if (cy > 88 && cy < viewH - 44) {
           const label = Math.abs(wy) < 1e-6 ? "0m" : `${Number(wy.toFixed(1))}m`;
           ctx.fillText(label, 8, cy - 3);
         }
       }
     }
 
-    // 5. World Origin Triad (0, 0) — Red +X / Green +Y
+    // 5. Real-Time 360° Raycasted 2D LiDAR Scan + Forward Head Stereo Camera FOV Frustum
+    const rC = worldToCanvas(latestRobotPose.x, latestRobotPose.y);
+    const rAngle = -latestRobotPose.yaw;
+    if (lidarEnabled && activeGrid) {
+      const rays = getCachedLidarRays(activeGrid);
+      if (rays.length > 4) {
+        ctx.save();
+        // 5a. Translucent 360° line-of-sight visibility polygon
+        const maxVisR = Math.max(40, 12.0 * pxPerMeter);
+        const visGrad = ctx.createRadialGradient(rC.cx, rC.cy, 4, rC.cx, rC.cy, maxVisR);
+        if (isLight) {
+          visGrad.addColorStop(0, "rgba(13, 148, 136, 0.14)");
+          visGrad.addColorStop(0.55, "rgba(14, 165, 233, 0.06)");
+          visGrad.addColorStop(1, "rgba(14, 165, 233, 0.0)");
+        } else {
+          visGrad.addColorStop(0, "rgba(45, 212, 191, 0.16)");
+          visGrad.addColorStop(0.55, "rgba(56, 189, 248, 0.06)");
+          visGrad.addColorStop(1, "rgba(56, 189, 248, 0.0)");
+        }
+        ctx.fillStyle = visGrad;
+        ctx.beginPath();
+        for (let i = 0; i < rays.length; i++) {
+          const pt = imageToCanvas(rays[i].px, rays[i].py);
+          if (i === 0) ctx.moveTo(pt.cx, pt.cy);
+          else ctx.lineTo(pt.cx, pt.cy);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // 5b. Forward Head Stereo Camera FOV Frustum (±42°, 4.4m range)
+        const fovHalf = (42 * Math.PI) / 180;
+        const fovMaxM = 4.4;
+        const fovR = fovMaxM * pxPerMeter;
+        const fovGrad = ctx.createRadialGradient(rC.cx, rC.cy, 6, rC.cx, rC.cy, Math.max(12, fovR));
+        if (isLight) {
+          fovGrad.addColorStop(0, "rgba(2, 132, 199, 0.22)");
+          fovGrad.addColorStop(1, "rgba(2, 132, 199, 0.02)");
+        } else {
+          fovGrad.addColorStop(0, "rgba(56, 189, 248, 0.26)");
+          fovGrad.addColorStop(1, "rgba(56, 189, 248, 0.02)");
+        }
+        ctx.fillStyle = fovGrad;
+        ctx.beginPath();
+        ctx.moveTo(rC.cx, rC.cy);
+        const steps = 18;
+        for (let s = 0; s <= steps; s++) {
+          const rel = -fovHalf + (s / steps) * (fovHalf * 2);
+          const idxRay = Math.round((((rel % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * rays.length) % rays.length;
+          const distM = Math.min(fovMaxM, rays[idxRay]?.distM ?? fovMaxM);
+          const angCanvas = rAngle - rel;
+          ctx.lineTo(rC.cx + Math.cos(angCanvas) * distM * pxPerMeter, rC.cy + Math.sin(angCanvas) * distM * pxPerMeter);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // Crisp FOV boundary rays
+        ctx.strokeStyle = isLight ? "rgba(2, 132, 199, 0.36)" : "rgba(125, 211, 252, 0.36)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        for (const side of [-fovHalf, fovHalf]) {
+          const angCanvas = rAngle - side;
+          ctx.beginPath();
+          ctx.moveTo(rC.cx, rC.cy);
+          ctx.lineTo(rC.cx + Math.cos(angCanvas) * fovR, rC.cy + Math.sin(angCanvas) * fovR);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+
+        // 5c. Subtle rotating LiDAR sweep highlight
+        const sweepAngle = (animPhase * 1.45) % (Math.PI * 2);
+
+        // 5d. Live Laser Hit Points on Real Walls
+        for (let i = 0; i < rays.length; i++) {
+          const ray = rays[i];
+          if (!ray.hit) continue;
+          const pt = imageToCanvas(ray.px, ray.py);
+          let delta = Math.abs(((ray.relAngle - sweepAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+          const boost = Math.max(0, 1 - delta / 0.65);
+          ctx.fillStyle = isLight
+            ? `rgba(13, 148, 136, ${(0.55 + boost * 0.42).toFixed(2)})`
+            : `rgba(45, 212, 191, ${(0.52 + boost * 0.46).toFixed(2)})`;
+          ctx.beginPath();
+          ctx.arc(pt.cx, pt.cy, 1.85 + boost * 1.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    // 6. World Origin Triad (0, 0) — Subtle Red +X / Green +Y
     const origC = worldToCanvas(0, 0);
-    const axisLen = 20;
-    ctx.lineWidth = 1.8;
-    ctx.strokeStyle = "#ef4444";
+    const axisLen = 18;
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = "rgba(239, 68, 68, 0.85)";
     ctx.beginPath();
     ctx.moveTo(origC.cx, origC.cy);
     ctx.lineTo(origC.cx + axisLen, origC.cy);
     ctx.stroke();
-    ctx.strokeStyle = "#22c55e";
+    ctx.strokeStyle = "rgba(34, 197, 94, 0.85)";
     ctx.beginPath();
     ctx.moveTo(origC.cx, origC.cy);
     ctx.lineTo(origC.cx, origC.cy - axisLen);
     ctx.stroke();
     ctx.fillStyle = isLight ? "#0f172a" : "#f8fafc";
     ctx.beginPath();
-    ctx.arc(origC.cx, origC.cy, 2.5, 0, Math.PI * 2);
+    ctx.arc(origC.cx, origC.cy, 2.2, 0, Math.PI * 2);
     ctx.fill();
 
-    // 6. Planned Path (glow under-stroke + crisp dashed trajectory)
-    if (plannedPath && plannedPath.length > 1) {
+    // 7. Real Cost-Aware A* Preview Route (or Active Backend Planned Path)
+    const hasBackendPath = plannedPath && plannedPath.length > 1;
+    if (hasBackendPath) {
+      drawAnimatedRoute(plannedPath, { isActiveNav: true, isLight });
+    } else if (previewRoute && previewRoute.ok && previewRoute.pointsWorld.length > 1) {
+      drawAnimatedRoute(previewRoute.pointsWorld, { isActiveNav: false, isLight });
+    } else if (goalPose && previewRoute && !previewRoute.ok) {
+      // Blocked / inside-obstacle warning chord
+      const gC = worldToCanvas(goalPose.x, goalPose.y);
       ctx.save();
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = isLight ? "rgba(2, 132, 199, 0.22)" : "rgba(56, 189, 248, 0.26)";
-      ctx.lineWidth = 7;
+      ctx.strokeStyle = "rgba(244, 63, 94, 0.72)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
       ctx.beginPath();
-      for (let i = 0; i < plannedPath.length; i++) {
-        const pt = worldToCanvas(plannedPath[i][0], plannedPath[i][1]);
-        if (i === 0) ctx.moveTo(pt.cx, pt.cy);
-        else ctx.lineTo(pt.cx, pt.cy);
-      }
+      ctx.moveTo(rC.cx, rC.cy);
+      ctx.lineTo(gC.cx, gC.cy);
       ctx.stroke();
-
-      ctx.strokeStyle = isLight ? "#0284c7" : "#38bdf8";
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([7, 5]);
-      ctx.stroke();
-      ctx.setLineDash([]);
       ctx.restore();
     }
 
-    // 7. Saved Waypoints (crisp rounded glassmorphic pins)
+    // 8. Saved Waypoints (sleek glowing pins + glass pills)
     ctx.font = "600 11px ui-sans-serif, system-ui, -apple-system, sans-serif";
     ctx.textAlign = "left";
     for (const wp of waypoints) {
       const wC = worldToCanvas(wp.x, wp.y);
-      ctx.fillStyle = "rgba(168, 85, 247, 0.24)";
+      ctx.fillStyle = "rgba(192, 132, 252, 0.22)";
       ctx.beginPath();
-      ctx.arc(wC.cx, wC.cy, 9, 0, Math.PI * 2);
+      ctx.arc(wC.cx, wC.cy, 9.5, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = "#a855f7";
       ctx.beginPath();
-      ctx.arc(wC.cx, wC.cy, 4.8, 0, Math.PI * 2);
+      ctx.arc(wC.cx, wC.cy, 4.6, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
 
       const tw = ctx.measureText(wp.name).width;
-      const pillX = wC.cx + 9;
+      const pillX = wC.cx + 13;
       const pillY = wC.cy - 10;
       const pillW = tw + 12;
       const pillH = 20;
-      drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 5);
-      ctx.fillStyle = isLight ? "rgba(255, 255, 255, 0.92)" : "rgba(15, 23, 42, 0.86)";
+      drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 6);
+      ctx.fillStyle = isLight ? "rgba(255, 255, 255, 0.92)" : "rgba(10, 17, 32, 0.86)";
       ctx.fill();
-      ctx.strokeStyle = isLight ? "rgba(168, 85, 247, 0.45)" : "rgba(192, 132, 252, 0.45)";
+      ctx.strokeStyle = isLight ? "rgba(168, 85, 247, 0.45)" : "rgba(192, 132, 252, 0.50)";
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.fillStyle = isLight ? "#581c87" : "#f3e8ff";
       ctx.fillText(wp.name, pillX + 6, pillY + 13.5);
     }
 
-    // 8. Goal Pose Marker (amber target beacon + heading arrow)
+    // 9. Goal Pose Target Beacon + Interactive Compass Heading Dial
     if (goalPose) {
       const gC = worldToCanvas(goalPose.x, goalPose.y);
       const angle = -goalPose.yaw;
+      const blocked = previewRoute && !previewRoute.ok;
+      const accent = blocked ? "#f43f5e" : "#f59e0b";
+      const pulse = (Math.sin(animPhase * 4.2) + 1) * 0.5;
 
-      ctx.fillStyle = "rgba(245, 158, 11, 0.20)";
+      // Pulsing acquisition halo
+      ctx.fillStyle = blocked
+        ? `rgba(244, 63, 94, ${(0.14 + pulse * 0.12).toFixed(2)})`
+        : `rgba(245, 158, 11, ${(0.14 + pulse * 0.12).toFixed(2)})`;
       ctx.beginPath();
-      ctx.arc(gC.cx, gC.cy, 15, 0, Math.PI * 2);
+      ctx.arc(gC.cx, gC.cy, 15 + pulse * 4, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 1.6;
+      // Compass heading dial ring (expanded with degree ticks while dragging)
+      const dialR = isDraggingGoal ? 26 : 13;
+      ctx.save();
+      ctx.strokeStyle = blocked ? "rgba(244, 63, 94, 0.78)" : "rgba(251, 191, 36, 0.78)";
+      ctx.lineWidth = 1.4;
+      if (isDraggingGoal) ctx.setLineDash([3, 3]);
       ctx.beginPath();
-      ctx.arc(gC.cx, gC.cy, 11.5, 0, Math.PI * 2);
+      ctx.arc(gC.cx, gC.cy, dialR, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.setLineDash([]);
+      if (isDraggingGoal) {
+        for (let k = 0; k < 8; k++) {
+          const a = (k * Math.PI) / 4;
+          ctx.beginPath();
+          ctx.moveTo(gC.cx + Math.cos(a) * (dialR - 3), gC.cy + Math.sin(a) * (dialR - 3));
+          ctx.lineTo(gC.cx + Math.cos(a) * (dialR + 3), gC.cy + Math.sin(a) * (dialR + 3));
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
 
-      const tipX = gC.cx + Math.cos(angle) * 26;
-      const tipY = gC.cy + Math.sin(angle) * 26;
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 2.8;
+      const vecLen = isDraggingGoal ? 34 : 26;
+      const tipX = gC.cx + Math.cos(angle) * vecLen;
+      const tipY = gC.cy + Math.sin(angle) * vecLen;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2.6;
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(gC.cx, gC.cy);
       ctx.lineTo(tipX, tipY);
       ctx.stroke();
 
-      // Arrowhead
-      const headLen = 7;
-      ctx.fillStyle = "#f59e0b";
+      const headLen = 7.5;
+      ctx.fillStyle = accent;
       ctx.beginPath();
       ctx.moveTo(tipX, tipY);
       ctx.lineTo(tipX - headLen * Math.cos(angle - 0.5), tipY - headLen * Math.sin(angle - 0.5));
@@ -938,26 +1311,41 @@ export function initNavigationTab(container) {
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = "#f59e0b";
+      ctx.fillStyle = accent;
       ctx.beginPath();
-      ctx.arc(gC.cx, gC.cy, 6, 0, Math.PI * 2);
+      ctx.arc(gC.cx, gC.cy, 5.8, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 2;
       ctx.stroke();
+
+      if (isDraggingGoal) {
+        const deg = Math.round((goalPose.yaw * 180) / Math.PI);
+        const label = `Yaw ${deg > 0 ? "+" : ""}${deg}°`;
+        ctx.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+        const lw = ctx.measureText(label).width + 12;
+        drawRoundedRect(ctx, gC.cx - lw / 2, gC.cy - dialR - 24, lw, 18, 5);
+        ctx.fillStyle = "rgba(9, 15, 28, 0.90)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(251, 191, 36, 0.65)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "#fde68a";
+        ctx.textAlign = "center";
+        ctx.fillText(label, gC.cx, gC.cy - dialR - 11.5);
+      }
     }
 
-    // 9. Robot Pose (true-scale physical chassis footprint ~0.68m diameter + sleek heading chevron)
-    const rC = worldToCanvas(latestRobotPose.x, latestRobotPose.y);
-    const rAngle = -latestRobotPose.yaw;
+    // 10. True-Scale Robot Chassis Footprint (~0.68m diameter) + Directional Chevron
     const chassisR = Math.max(9.5, Math.min(34, 0.34 * pxPerMeter));
+    const rPulse = (Math.sin(animPhase * 3.0) + 1) * 0.5;
 
-    ctx.fillStyle = "rgba(20, 184, 166, 0.18)";
+    ctx.fillStyle = `rgba(45, 212, 191, ${(0.12 + rPulse * 0.10).toFixed(2)})`;
     ctx.beginPath();
-    ctx.arc(rC.cx, rC.cy, chassisR + 5, 0, Math.PI * 2);
+    ctx.arc(rC.cx, rC.cy, chassisR + 4 + rPulse * 3, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(20, 184, 166, 0.28)";
+    ctx.fillStyle = isLight ? "rgba(13, 148, 136, 0.24)" : "rgba(20, 184, 166, 0.30)";
     ctx.beginPath();
     ctx.arc(rC.cx, rC.cy, chassisR, 0, Math.PI * 2);
     ctx.fill();
@@ -965,11 +1353,10 @@ export function initNavigationTab(container) {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Directional navigation chevron inside footprint
     ctx.save();
     ctx.translate(rC.cx, rC.cy);
     ctx.rotate(rAngle);
-    const arrowR = Math.max(8, chassisR * 0.85);
+    const arrowR = Math.max(8, chassisR * 0.86);
     ctx.fillStyle = "#14b8a6";
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 1.8;
@@ -983,16 +1370,79 @@ export function initNavigationTab(container) {
     ctx.stroke();
     ctx.restore();
 
-    // 10. Dynamic CAD Metric Scale Bar (bottom-right, mathematically exact!)
+    // 11. Interactive 2-Point Metric Tape Measure Overlay
+    const mA = measurePoints[0];
+    const mB = measurePoints[1] || (measureMode && measurePoints.length === 1 ? measureHover : null);
+    if (mA) {
+      const pA = worldToCanvas(mA.wx, mA.wy);
+      ctx.save();
+      if (mB) {
+        const pB = worldToCanvas(mB.wx, mB.wy);
+        const dWx = mB.wx - mA.wx;
+        const dWy = mB.wy - mA.wy;
+        const distM = Math.hypot(dWx, dWy);
+        const deg = Math.round((Math.atan2(dWy, dWx) * 180) / Math.PI);
+
+        ctx.strokeStyle = isLight ? "rgba(217, 119, 6, 0.35)" : "rgba(251, 191, 36, 0.28)";
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(pA.cx, pA.cy);
+        ctx.lineTo(pB.cx, pB.cy);
+        ctx.stroke();
+
+        ctx.strokeStyle = isLight ? "#d97706" : "#fbbf24";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(pA.cx, pA.cy);
+        ctx.lineTo(pB.cx, pB.cy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Midpoint metric dimension pill
+        const midX = (pA.cx + pB.cx) * 0.5;
+        const midY = (pA.cy + pB.cy) * 0.5 - 14;
+        const text = `${distM.toFixed(2)} m  (ΔX ${dWx >= 0 ? "+" : ""}${dWx.toFixed(1)} · ΔY ${dWy >= 0 ? "+" : ""}${dWy.toFixed(1)} · ${deg}°)`;
+        ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
+        const tw = ctx.measureText(text).width + 16;
+        drawRoundedRect(ctx, midX - tw / 2, midY - 12, tw, 22, 6);
+        ctx.fillStyle = isLight ? "rgba(255, 251, 235, 0.96)" : "rgba(15, 23, 42, 0.92)";
+        ctx.fill();
+        ctx.strokeStyle = isLight ? "rgba(217, 119, 6, 0.65)" : "rgba(251, 191, 36, 0.70)";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.fillStyle = isLight ? "#92400e" : "#fde68a";
+        ctx.textAlign = "center";
+        ctx.fillText(text, midX, midY + 3);
+
+        ctx.fillStyle = "#f59e0b";
+        ctx.beginPath();
+        ctx.arc(pB.cx, pB.cy, 4.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#f59e0b";
+      ctx.beginPath();
+      ctx.arc(pA.cx, pA.cy, 4.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 12. Mini Compass Rose (N / +Y) + Dynamic CAD Metric Scale Bar (bottom-right)
     const scaleMeters = pickNiceMetricStep(pxPerMeter, 72);
     const barPx = Math.round(scaleMeters * pxPerMeter);
+    const scaleBoxH = 26;
     if (barPx >= 36 && barPx <= viewW * 0.36) {
       const boxW = barPx + 22;
-      const boxH = 26;
       const bx = viewW - boxW - 12;
-      const by = viewH - boxH - 12;
-      drawRoundedRect(ctx, bx, by, boxW, boxH, 6);
-      ctx.fillStyle = isLight ? "rgba(255, 255, 255, 0.90)" : "rgba(11, 18, 32, 0.84)";
+      const by = viewH - scaleBoxH - 12;
+      drawRoundedRect(ctx, bx, by, boxW, scaleBoxH, 7);
+      ctx.fillStyle = isLight ? "rgba(255, 255, 255, 0.92)" : "rgba(9, 15, 28, 0.86)";
       ctx.fill();
       ctx.strokeStyle = isLight ? "rgba(148, 163, 184, 0.45)" : "rgba(148, 163, 184, 0.24)";
       ctx.lineWidth = 1;
@@ -1016,6 +1466,38 @@ export function initNavigationTab(container) {
       ctx.fillText(`${scaleMeters} m`, (x0 + x1) * 0.5, by + 12);
     }
 
+    // Mini Compass Badge right above scale bar
+    const cmpX = viewW - 28;
+    const cmpY = viewH - scaleBoxH - 36;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cmpX, cmpY, 15, 0, Math.PI * 2);
+    ctx.fillStyle = isLight ? "rgba(255, 255, 255, 0.90)" : "rgba(9, 15, 28, 0.84)";
+    ctx.fill();
+    ctx.strokeStyle = isLight ? "rgba(148, 163, 184, 0.45)" : "rgba(148, 163, 184, 0.24)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // North (+Y) pointer
+    ctx.fillStyle = "#ef4444";
+    ctx.beginPath();
+    ctx.moveTo(cmpX, cmpY - 10);
+    ctx.lineTo(cmpX - 3.5, cmpY + 1);
+    ctx.lineTo(cmpX + 3.5, cmpY + 1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = isLight ? "#94a3b8" : "#475569";
+    ctx.beginPath();
+    ctx.moveTo(cmpX, cmpY + 10);
+    ctx.lineTo(cmpX - 3.5, cmpY + 1);
+    ctx.lineTo(cmpX + 3.5, cmpY + 1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = "700 8px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.fillStyle = isLight ? "#334155" : "#cbd5e1";
+    ctx.textAlign = "center";
+    ctx.fillText("+Y", cmpX, cmpY - 18);
+    ctx.restore();
+
     ctx.restore();
   }
 
@@ -1038,14 +1520,26 @@ export function initNavigationTab(container) {
       return;
     }
     if (e.button === 0) {
-      isDraggingGoal = true;
       const { px, py } = canvasToImage(cx, cy);
       const { wx, wy } = imageToWorld(px, py);
+      if (measureMode) {
+        if (measurePoints.length === 0 || measurePoints.length >= 2) {
+          measurePoints = [{ wx, wy }];
+          measureHover = { wx, wy };
+        } else {
+          measurePoints = [measurePoints[0], { wx, wy }];
+          measureHover = null;
+        }
+        drawMap();
+        return;
+      }
+      isDraggingGoal = true;
       dragStartPos = { wx, wy };
       goalPose = { x: Math.round(wx * 100) / 100, y: Math.round(wy * 100) / 100, yaw: 0 };
       container.querySelector("#navGoalInputX").value = goalPose.x;
       container.querySelector("#navGoalInputY").value = goalPose.y;
       container.querySelector("#navGoalInputYaw").value = 0;
+      recomputePreviewRoute(true);
       drawMap();
     }
   }
@@ -1058,8 +1552,19 @@ export function initNavigationTab(container) {
       const { wx, wy } = imageToWorld(px, py);
       const overlay = container.querySelector("#navCoordsOverlay");
       if (overlay) {
-        const yawDeg = goalPose ? ((goalPose.yaw * 180) / Math.PI).toFixed(0) : "0";
-        overlay.textContent = `X: ${wx.toFixed(2)}m | Y: ${wy.toFixed(2)}m | Goal Yaw: ${yawDeg}°`;
+        const info = queryCellInfo(styledMapCache.grid, px, py);
+        let probeTag = "未探索区";
+        if (info.state === "occupied") {
+          probeTag = "墙体占用";
+        } else if (info.state === "free" && info.clearanceM != null) {
+          const status = info.clearanceM < 0.34 ? "碰撞风险" : info.clearanceM < 0.65 ? "窄通道" : "安全通行";
+          probeTag = `壁距 ${info.clearanceM.toFixed(2)}m · ${status}`;
+        }
+        overlay.textContent = `X: ${wx.toFixed(2)}m | Y: ${wy.toFixed(2)}m | ${probeTag}`;
+      }
+      if (measureMode && measurePoints.length === 1) {
+        measureHover = { wx, wy };
+        drawMap();
       }
     }
     if (isPanning) {
@@ -1083,9 +1588,11 @@ export function initNavigationTab(container) {
   }
 
   function onMapMouseUp() {
+    const wasDragging = isDraggingGoal;
     isPanning = false;
     isDraggingGoal = false;
     dragStartPos = null;
+    if (wasDragging) drawMap();
   }
 
   function onMapWheel(e) {
@@ -1133,9 +1640,11 @@ export function initNavigationTab(container) {
             container.querySelector("#navGoalInputX").value = wp.x;
             container.querySelector("#navGoalInputY").value = wp.y;
             container.querySelector("#navGoalInputYaw").value = Math.round(((wp.yaw || 0) * 180) / Math.PI);
+            recomputePreviewRoute(true);
             drawMap();
-            if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
-            notify(`已载入航点「${wp.name}」到目标框（点击下发导航目标执行）`, "info");
+            const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
+            if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
+            notify(`已载入航点「${wp.name}」并生成 A* 避障预览路径`, "info");
           });
         });
         listEl.querySelectorAll(".wp-del-btn").forEach(btn => {
@@ -1178,6 +1687,20 @@ export function initNavigationTab(container) {
     }
   });
 
+  // Live goal input sync -> instant A* route preview
+  for (const sel of ["#navGoalInputX", "#navGoalInputY", "#navGoalInputYaw"]) {
+    container.querySelector(sel)?.addEventListener("input", () => {
+      const x = parseFloat(container.querySelector("#navGoalInputX").value);
+      const y = parseFloat(container.querySelector("#navGoalInputY").value);
+      const yawDeg = parseFloat(container.querySelector("#navGoalInputYaw").value) || 0;
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        goalPose = { x, y, yaw: (yawDeg * Math.PI) / 180 };
+        recomputePreviewRoute(true);
+        drawMap();
+      }
+    });
+  }
+
   // Goal Inputs & Actions
   container.querySelector("#navSendGoalBtn").addEventListener("click", async () => {
     const x = parseFloat(container.querySelector("#navGoalInputX").value) || 0;
@@ -1188,8 +1711,10 @@ export function initNavigationTab(container) {
       const res = await api.sendNavGoal(x, y, yawRad);
       goalPose = { x, y, yaw: yawRad };
       if (res.path_points) plannedPath = res.path_points;
+      recomputePreviewRoute(true);
       drawMap();
-      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
+      const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
+      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
       notify(`已下发导航目标: (${x.toFixed(2)}m, ${y.toFixed(2)}m, ${yawDeg.toFixed(0)}°)`, "success");
     } catch (err) {
       notify(`下发导航目标失败: ${err.message}`, "error");
@@ -1201,6 +1726,9 @@ export function initNavigationTab(container) {
       await api.cancelNav();
       goalPose = null;
       plannedPath = [];
+      previewRoute = null;
+      lastRouteKey = null;
+      updateRouteBanner();
       drawMap();
       if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: null, path: [] });
       notify("已取消当前导航任务", "info");
@@ -1309,6 +1837,10 @@ export function initNavigationTab(container) {
 
   const onKeyDown = (e) => {
     if (!container.classList.contains("active") || !mapSupported) return;
+    if (e.key === "Escape" && measureMode) {
+      setMeasureMode(false);
+      return;
+    }
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
     const key = e.key.toLowerCase();
     if (key === "w") triggerChassis(getLin(), 0, 0);
@@ -1424,12 +1956,18 @@ export function initNavigationTab(container) {
         };
       }
 
-      if (mapView === "occupancy2d") syncCanvasSize(false);
+      if (goalPose) recomputePreviewRoute(false);
+      if (mapView === "occupancy2d") {
+        syncCanvasSize(false);
+        syncAnimLoop();
+      }
       drawMap();
-      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: plannedPath });
+      const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
+      if (mapView === "cloud3d") cloudViewer.setOverlays({ pose: latestRobotPose, goal: goalPose, path: overlayPath });
     },
     destroy() {
       stopHold();
+      stopAnimLoop();
       if (mapResizeObserver) mapResizeObserver.disconnect();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("blur", onWindowBlur);
