@@ -1259,73 +1259,157 @@ dialog.robot-import-dialog:modal {width:min(940px, calc(100vw - 32px)); max-widt
 .psc-name {max-width:128px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .psc-dur {font-family:var(--font-mono); font-size:10px; color:var(--text-muted);}
 
-/* Upgrade v12: HiDPI 1:1 Isotropic 2D Blueprint Map Stage & Floating Controls */
+/* Upgrade v13: Tactical 2D Robotics Navigation Console (Nav2 Costmap + LiDAR + A* HUD) */
 .nav-map-stage {
   position: relative;
   width: 100%;
-  height: clamp(480px, 58vh, 620px);
-  background: #0b1220;
+  height: clamp(500px, 60vh, 640px);
+  background: #070d18;
   border-radius: var(--radius-md);
   overflow: hidden;
-  border: 1px solid var(--border);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 24px -12px rgba(2, 6, 23, 0.45);
 }
 .nav-map-stage.nav-map-light {
   background: #e9eef4;
+  border-color: var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 .nav-2d-toolbar {
   position: absolute;
   top: 12px;
   left: 12px;
-  z-index: 3;
+  z-index: 4;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   padding: 4px;
-  border-radius: 8px;
-  background: rgba(11, 18, 32, 0.82);
+  border-radius: 9px;
+  background: rgba(9, 15, 28, 0.84);
   border: 1px solid rgba(148, 163, 184, 0.24);
-  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
 }
 .nav-2d-toolbar[hidden] {display: none !important;}
 .nav-map-light .nav-2d-toolbar {
-  background: rgba(255, 255, 255, 0.90);
-  border-color: rgba(148, 163, 184, 0.40);
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(148, 163, 184, 0.42);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+}
+.nav-tool-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: rgba(148, 163, 184, 0.28);
+}
+.nav-map-light .nav-tool-sep {
+  background: rgba(148, 163, 184, 0.42);
 }
 .nav-map-tool-btn {
   border: 0;
   background: transparent;
-  color: #e2e8f0;
+  color: #cbd5e1;
   font-size: 11px;
   font-weight: 600;
   padding: 4px 8px;
-  border-radius: 5px;
+  border-radius: 6px;
   cursor: pointer;
   line-height: 1.2;
-  transition: background 0.14s ease, color 0.14s ease;
+  transition: background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
 }
-.nav-map-tool-btn:hover {background: rgba(56, 189, 248, 0.20); color: #ffffff;}
-.nav-map-tool-btn.active {background: #0284c7; color: #ffffff;}
+.nav-map-tool-btn:hover {background: rgba(56, 189, 248, 0.18); color: #f8fafc;}
+.nav-map-tool-btn.active {
+  background: rgba(14, 165, 233, 0.24);
+  color: #7dd3fc;
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.48);
+}
+.nav-map-tool-btn.active-measure {
+  background: rgba(245, 158, 11, 0.24);
+  color: #fcd34d;
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.52);
+}
 .nav-map-light .nav-map-tool-btn {color: #334155;}
 .nav-map-light .nav-map-tool-btn:hover {background: #e2e8f0; color: #0f172a;}
-.nav-map-light .nav-map-tool-btn.active {background: #0f766e; color: #ffffff;}
+.nav-map-light .nav-map-tool-btn.active {
+  background: #0f766e;
+  color: #ffffff;
+  box-shadow: none;
+}
+.nav-map-light .nav-map-tool-btn.active-measure {
+  background: #d97706;
+  color: #ffffff;
+  box-shadow: none;
+}
+.nav-route-pill {
+  position: absolute;
+  top: 52px;
+  left: 12px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: #e0f2fe;
+  background: rgba(9, 15, 28, 0.88);
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.nav-route-pill[hidden] {display: none !important;}
+.nav-route-pill.is-blocked {
+  color: #fecdd3;
+  border-color: rgba(244, 63, 94, 0.55);
+  background: rgba(45, 10, 22, 0.90);
+}
+.nav-map-light .nav-route-pill {
+  color: #0c4a6e;
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(2, 132, 199, 0.38);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.10);
+}
+.nav-map-light .nav-route-pill.is-blocked {
+  color: #9f1239;
+  background: rgba(255, 241, 242, 0.96);
+  border-color: rgba(225, 29, 72, 0.45);
+}
+.nrp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
+}
+.nav-route-pill.is-blocked .nrp-dot {
+  background: #f43f5e;
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.85);
+}
+.nrp-sep {opacity: 0.45;}
+.nrp-clr-safe {color: #34d399;}
+.nrp-clr-tight {color: #fbbf24;}
+.nav-map-light .nrp-clr-safe {color: #059669;}
+.nav-map-light .nrp-clr-tight {color: #d97706;}
 .nav-map-overlay-chip {
   position: absolute;
   bottom: 12px;
   left: 12px;
   z-index: 3;
-  background: rgba(11, 18, 32, 0.84);
+  background: rgba(9, 15, 28, 0.86);
   color: #e2e8f0;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border: 1px solid rgba(148, 163, 184, 0.24);
   font-size: 11px;
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: 7px;
   font-family: var(--font-mono);
   pointer-events: none;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
 }
 .nav-map-light .nav-map-overlay-chip {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.93);
   color: #0f172a;
   border-color: rgba(148, 163, 184, 0.45);
 }
@@ -1339,15 +1423,15 @@ dialog.robot-import-dialog:modal {width:min(940px, calc(100vw - 32px)); max-widt
   gap: 3px;
   font-size: 11px;
   color: #cbd5e1;
-  background: rgba(11, 18, 32, 0.82);
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(9, 15, 28, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.24);
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   pointer-events: none;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
 }
 .nav-map-light .nav-map-legend {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.93);
   color: #334155;
   border-color: rgba(148, 163, 184, 0.45);
 }
