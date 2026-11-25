@@ -401,20 +401,120 @@ export function filterDynamicObstacles3D(parsed, {
   };
 }
 
-export function buildColoredPcdCloud(parsed, { colorMode = "height", zMin = -1.0, zMax = 2.6, label = RECORDED_PCD_LABEL } = {}) {
+function buildLocalGroundField(positions, count, bounds, tileRes = 0.5) {
+  let zSum = 0;
+  let zCnt = 0;
+  const stride = count > 200000 ? 4 : 1;
+  for (let i = 0; i < count; i += stride) {
+    const z = positions[i * 3 + 2];
+    if (z > -0.75 && z < 0.35) {
+      zSum += z;
+      zCnt++;
+    }
+  }
+  const defaultFloorZ = zCnt > 0 ? zSum / zCnt : Math.max(-0.5, Math.min(0.15, bounds.minZ));
+  const ox = bounds.minX - 0.5;
+  const oy = bounds.minY - 0.5;
+  const spanX = Math.max(1.0, bounds.maxX - bounds.minX + 1.0);
+  const spanY = Math.max(1.0, bounds.maxY - bounds.minY + 1.0);
+  const res = Math.max(0.25, tileRes);
+  const w = Math.max(4, Math.ceil(spanX / res));
+  const h = Math.max(4, Math.ceil(spanY / res));
+  const inv = 1.0 / res;
+  const n = w * h;
+
+  const sumZ = new Float32Array(n);
+  const cntZ = new Uint16Array(n);
+  // Reject sub-floor mirror reflections (< defaultFloorZ - 0.18) when estimating real floor surface!
+  const zLo = defaultFloorZ - 0.18;
+  const zHi = defaultFloorZ + 0.32;
+
+  for (let i = 0; i < count; i++) {
+    const o = i * 3;
+    const z = positions[o + 2];
+    if (z < zLo || z > zHi) continue;
+    const gx = Math.floor((positions[o] - ox) * inv);
+    const gy = Math.floor((positions[o + 1] - oy) * inv);
+    if (gx < 0 || gx >= w || gy < 0 || gy >= h) continue;
+    const idx = gy * w + gx;
+    if (cntZ[idx] < 65535) {
+      sumZ[idx] += z;
+      cntZ[idx]++;
+    }
+  }
+
+  // Smooth & fill empty tiles from 3x3 valid neighbors for tilt-adaptive ground plane
+  const floorZ = new Float32Array(n);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      const idx = row + x;
+      if (cntZ[idx] > 0) {
+        floorZ[idx] = Math.max(defaultFloorZ - 0.08, sumZ[idx] / cntZ[idx]);
+        continue;
+      }
+      let sum = 0;
+      let cnt = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= h) continue;
+        const nr = ny * w;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= w) continue;
+          const ni = nr + nx;
+          if (cntZ[ni] > 0) {
+            sum += sumZ[ni] / cntZ[ni];
+            cnt++;
+          }
+        }
+      }
+      floorZ[idx] = cnt > 0 ? Math.max(defaultFloorZ - 0.08, sum / cnt) : defaultFloorZ;
+    }
+  }
+
+  return { ox, oy, inv, w, h, floorZ, defaultFloorZ };
+}
+
+export function buildColoredPcdCloud(parsed, {
+  colorMode = "height",
+  zMin = -1.0,
+  zMax = 2.6,
+  hideGround = false,
+  groundMargin = 0.22,
+  label = RECORDED_PCD_LABEL,
+} = {}) {
   const srcPos = parsed.positions;
   const srcInt = parsed.intensities;
   const n = parsed.count;
   const b = parsed.bounds;
-  const zSpan = Math.max(0.25, Math.min(zMax, b.maxZ) - Math.max(zMin, b.minZ));
-  const zBase = Math.max(zMin, b.minZ);
+  const groundField = hideGround ? buildLocalGroundField(srcPos, n, b, 0.5) : null;
+  const zBase = hideGround
+    ? (groundField.defaultFloorZ + groundMargin)
+    : Math.max(zMin, b.minZ);
+  const zSpan = Math.max(0.25, Math.min(zMax, b.maxZ) - zBase);
   const iSpan = Math.max(1e-3, (b.maxI || 1) - (b.minI || 0));
 
-  // Count matching points first to allocate exact typed arrays (fast, zero GC spikes)
+  const keepMask = new Uint8Array(n);
   let kept = 0;
+  let groundRemoved = 0;
   for (let i = 0; i < n; i++) {
-    const z = srcPos[i * 3 + 2];
-    if (z >= zMin && z <= zMax) kept++;
+    const idx = i * 3;
+    const z = srcPos[idx + 2];
+    if (z < zMin || z > zMax) continue;
+    if (groundField) {
+      const gx = Math.floor((srcPos[idx] - groundField.ox) * groundField.inv);
+      const gy = Math.floor((srcPos[idx + 1] - groundField.oy) * groundField.inv);
+      const localFloor = (gx >= 0 && gx < groundField.w && gy >= 0 && gy < groundField.h)
+        ? groundField.floorZ[gy * groundField.w + gx]
+        : groundField.defaultFloorZ;
+      if (z < localFloor + groundMargin) {
+        groundRemoved++;
+        continue;
+      }
+    }
+    keepMask[i] = 1;
+    kept++;
   }
 
   const positions = new Float32Array(kept * 3);
@@ -422,9 +522,9 @@ export function buildColoredPcdCloud(parsed, { colorMode = "height", zMin = -1.0
   let out = 0;
 
   for (let i = 0; i < n; i++) {
+    if (!keepMask[i]) continue;
     const idx = i * 3;
     const z = srcPos[idx + 2];
-    if (z < zMin || z > zMax) continue;
     const o = out * 3;
     positions[o] = srcPos[idx];
     positions[o + 1] = srcPos[idx + 1];
@@ -457,6 +557,7 @@ export function buildColoredPcdCloud(parsed, { colorMode = "height", zMin = -1.0
     count: kept,
     totalCount: parsed.rawCount || n,
     dynamicRemoved: parsed.dynamicRemoved || 0,
+    groundRemoved,
     source: RECORDED_PCD_SOURCE,
     live: false,
     bounds: b,

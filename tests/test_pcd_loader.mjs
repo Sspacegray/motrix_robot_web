@@ -134,3 +134,28 @@ test('filterDynamicObstacles3D removes floating corridor pedestrian ghosts while
   assert.ok(wallKept > 300, `static wall points must survive, got ${wallKept}`);
   assert.equal(ghostKept, 0, `floating corridor ghost points must be removed, got ${ghostKept}`);
 });
+
+test('buildColoredPcdCloud with hideGround removes tilted floor while keeping static walls', () => {
+  const pts = [];
+  // Gently tilted floor (z rises from 0.00 at x=0 to 0.14 at x=6) + static wall at x=0.5 (z=0.35..1.8)
+  for (let x = 0; x <= 6; x += 0.25) {
+    const fz = (x / 6) * 0.14;
+    for (let y = 0; y <= 4; y += 0.25) {
+      pts.push([x, y, fz, 15]);
+    }
+  }
+  for (let y = 0; y <= 4; y += 0.2) {
+    for (let z = 0.38; z <= 1.6; z += 0.2) {
+      pts.push([0.5, y, z, 90]);
+    }
+  }
+  const parsed = parsePcdBuffer(makeBinaryPcd(pts));
+  const withGnd = buildColoredPcdCloud(parsed, { zMin: -0.5, zMax: 2.0, hideGround: false });
+  const noGnd = buildColoredPcdCloud(parsed, { zMin: -0.5, zMax: 2.0, hideGround: true, groundMargin: 0.20 });
+
+  assert.ok(noGnd.groundRemoved >= 350, `expected all floor points removed, got ${noGnd.groundRemoved}`);
+  assert.ok(noGnd.count > 100 && noGnd.count < withGnd.count - 300, `walls must remain, got ${noGnd.count}`);
+  for (let i = 0; i < noGnd.count; i++) {
+    assert.ok(noGnd.positions[i * 3 + 2] >= 0.30, 'no floor points should remain');
+  }
+});

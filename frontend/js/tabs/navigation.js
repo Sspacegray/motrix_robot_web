@@ -40,6 +40,7 @@ export function initNavigationTab(container) {
   let cloudColorMode = "height";
   let cloudZMax = 2.0;
   let cloudCleanDynamic = true;
+  let cloudHideGround = true;
   let goalPose = null; // { x, y, yaw }
   let isDraggingGoal = false;
   let dragStartPos = null;
@@ -93,6 +94,7 @@ export function initNavigationTab(container) {
             </div>
             <div class="cloud-plan-actions">
               <button type="button" class="btn btn-sm" id="cloudCleanDynamicBtn" aria-pressed="true" title="基于 3D 密度/连通域 + 2D 走廊自由空间雕刻，自动消除建图时残留的行人/移动物体鬼影">消除动态障碍 ✓</button>
+              <button type="button" class="btn btn-sm" id="cloudHideGroundBtn" aria-pressed="true" title="按局部自适应地面高程剔除地板点云，仅显示干净墙体与结构（不影响地面选点与规划）">剔除地面 ✓</button>
               <button type="button" class="btn btn-sm" id="cloudUndoWpBtn" disabled title="撤销最近一个 3D 点云航点">撤销点</button>
               <button type="button" class="btn btn-sm" id="cloudClearWpBtn" disabled title="清空当前 3D 点云规划航点">清空</button>
               <button type="button" class="btn btn-sm btn-primary" id="cloudDispatchNavBtn" disabled title="直接按当前 3D 点云规划路径与航点序列下发导航">按点云路径导航</button>
@@ -779,6 +781,8 @@ export function initNavigationTab(container) {
         colorMode: cloudColorMode,
         zMin: Math.min(-0.6, parsed.bounds.minZ),
         zMax: cloudZMax,
+        hideGround: cloudHideGround,
+        groundMargin: 0.24,
         label: pc.label || RECORDED_PCD_LABEL,
       });
       cloudViewer.setCloud(colored, { preserveCamera });
@@ -1057,6 +1061,25 @@ export function initNavigationTab(container) {
     if (currentParsedPcd) {
       ensureActiveCloud(true);
       notify(cloudCleanDynamic ? "已开启 3D 动态障碍物消除（剔除走廊行人鬼影并重算 3D 路径）" : "已关闭 3D 动态障碍消除，显示原始建图点云", "info");
+    }
+  });
+
+  const hideGndBtn = container.querySelector("#cloudHideGroundBtn");
+  function updateHideGroundBtn() {
+    if (!hideGndBtn) return;
+    hideGndBtn.setAttribute("aria-pressed", cloudHideGround ? "true" : "false");
+    hideGndBtn.textContent = cloudHideGround ? "剔除地面 ✓" : "剔除地面";
+    hideGndBtn.style.background = cloudHideGround ? "rgba(14, 165, 233, 0.16)" : "";
+    hideGndBtn.style.borderColor = cloudHideGround ? "#0284c7" : "";
+    hideGndBtn.style.color = cloudHideGround ? "#0369a1" : "";
+  }
+  updateHideGroundBtn();
+  hideGndBtn?.addEventListener("click", () => {
+    cloudHideGround = !cloudHideGround;
+    updateHideGroundBtn();
+    if (currentParsedPcd) {
+      ensureActiveCloud(true);
+      notify(cloudHideGround ? "已开启局部自适应地面剔除（保留 3D 地面选点与避障规划）" : "已恢复显示地面点云", "info");
     }
   });
 
