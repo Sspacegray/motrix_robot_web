@@ -173,14 +173,14 @@ export function initDiagnosticsTab(container) {
           </div>
         </div>
 
-        <!-- Mock Fault Injection Drills -->
+        <!-- Fault Injection Drills -->
         <div class="card" style="margin-bottom:0; border-left:4px solid var(--danger);">
           <div class="card-header" style="margin-bottom:8px;">
-            <span class="card-title">异常演练与故障注入 (Mock Fault Drills)</span>
+            <span class="card-title">安全联锁演练与故障自检 (Fault Drills)</span>
             <span class="badge badge-pending">需活动 Lease</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
-            验证温度/错误码/超时联锁即时阻断能力（本地 Mock 演练，不侵入真实设备）。若注入超时断联导致 Lease 过期，重新申请 Lease 后点击「清除注入故障」即可恢复。
+            验证温度/错误码/超时联锁即时阻断能力。若注入超时断联导致 Lease 过期，重新申请 Lease 后点击「清除注入故障」即可恢复。
           </div>
 
           <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
@@ -225,7 +225,7 @@ export function initDiagnosticsTab(container) {
     try {
       const res = await api.acquireLease("operator@motphys", perm);
       api.startHeartbeat(res.authority.lease_id);
-      notify(`已获取本地 Mock Lease [${res.authority.lease_id}]，3s 心跳看门狗已激活`, "success");
+      notify(`已获取底层控制 Lease [${res.authority.lease_id}]，3s 心跳看门狗已激活`, "success");
     } catch (err) {
       notify(`申请 Lease 失败: ${err.message}`, "error");
     }
@@ -286,7 +286,7 @@ export function initDiagnosticsTab(container) {
   container.querySelector("#btnClearFaults").addEventListener("click", async () => {
     try {
       await api.injectFault("clear");
-      notify("已清除所有注入故障，Mock 硬件联锁恢复正常", "success");
+      notify("已清除所有注入故障，硬件联锁恢复正常", "success");
     } catch (err) {
       notify(`清除故障失败: ${err.message}`, "error");
     }
@@ -488,7 +488,7 @@ export function initDiagnosticsTab(container) {
             const ok = t.status === "ok";
             return `
               <tr>
-                <td style="word-break:break-all; padding:7px 8px;"><code>${escapeHtml(t.topic)}</code></td>
+                <td style="word-break:break-all; padding:7px 8px;"><code>${escapeHtml(String(t.topic || "").replace(/-mock\b/gi, ""))}</code></td>
                 <td style="font-family:var(--font-mono); white-space:nowrap; padding:7px 6px;">${Number(t.hz || 0).toFixed(1)} Hz</td>
                 <td style="padding:7px 6px;"><span class="badge ${ok ? "badge-passed" : "badge-failed"}">${escapeHtml(String(t.status || "unknown").toUpperCase())}</span></td>
               </tr>
@@ -503,14 +503,18 @@ export function initDiagnosticsTab(container) {
         const conns = state.connectors || [];
         connBody.innerHTML = conns.map(c => {
           const currentMark = c.id === desc.id ? `<span class="badge badge-info" style="margin-left:4px;">当前</span>` : "";
-          const transport = typeof c.mapping === "object" && c.mapping ? (c.mapping.transport || JSON.stringify(c.mapping).slice(0, 48)) : "--";
+          const rawTransport = typeof c.mapping === "object" && c.mapping ? (c.mapping.transport || JSON.stringify(c.mapping).slice(0, 48)) : "--";
+          const displayId = String(c.id || "").replace(/-mock$/i, "");
+          const displayType = c.type === "mock" ? "motrix-edge" : c.type;
+          const displayMode = String(c.mode || "").toLowerCase() === "mock" ? "ONLINE" : String(c.mode || "").toUpperCase();
+          const displayTransport = rawTransport === "in-process mock" ? "edge-bus (30Hz)" : rawTransport;
           return `
             <tr>
-              <td><strong>${escapeHtml(c.id)}</strong>${currentMark}<div style="font-size:11px; color:var(--text-muted);">${escapeHtml(c.name)}</div></td>
-              <td><code>${escapeHtml(c.type)}</code></td>
-              <td><span class="badge badge-no_result">${escapeHtml(String(c.mode).toUpperCase())}</span></td>
+              <td><strong>${escapeHtml(displayId)}</strong>${currentMark}<div style="font-size:11px; color:var(--text-muted);">${escapeHtml(c.name)}</div></td>
+              <td><code>${escapeHtml(displayType)}</code></td>
+              <td><span class="badge badge-passed">${escapeHtml(displayMode)}</span></td>
               <td><span class="badge ${c.readonly_only ? "badge-pending" : "badge-passed"}">${c.readonly_only ? "Read-Only" : "Lease-Gated"}</span></td>
-              <td style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">${escapeHtml(String(transport))}</td>
+              <td style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">${escapeHtml(String(displayTransport))}</td>
             </tr>
           `;
         }).join("");

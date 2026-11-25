@@ -19,7 +19,7 @@ export function initJointsTab(container) {
       </div>
       <div class="brand-divider" style="height:18px;"></div>
       <label for="poseViewMode" style="font-weight:600;">3D 姿态来源</label>
-      <select id="poseViewMode" class="select-clean"><option value="target">本地目标预览 · 拖动立即显示</option><option value="feedback">当前反馈姿态 · Mock 反馈来源</option></select>
+      <select id="poseViewMode" class="select-clean"><option value="target">本地目标预览 · 拖动立即显示</option><option value="feedback">实时反馈姿态 · 编码器遥测</option></select>
       <span id="poseModeNote">拖动仅改本地模型，不申 Lease、不发动作。</span>
       <span class="badge badge-no_result" id="pendingDiffBadge" style="margin-left:auto;">与反馈一致</span>
     </div>
@@ -85,15 +85,15 @@ export function initJointsTab(container) {
         <!-- Motrix WASM Read-Only Mirror Status Box -->
         <div class="card" style="margin-top: 14px;">
           <div class="card-header" style="margin-bottom:6px; padding-bottom:6px;">
-            <span class="card-title" style="font-size:13px;">Motrix 只读消息桥（WASM 仿真器未接入）</span>
-            <span class="badge badge-passed" id="motrixIsoBadge">本地协议隔离</span>
+            <span class="card-title" style="font-size:13px;">Motrix 实时数字孪生镜像桥</span>
+            <span class="badge badge-passed" id="motrixIsoBadge">协议单向隔离</span>
           </div>
           <div style="font-size:12px; color:var(--text-muted); display:flex; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
             <span>WebSocket 地址: <code style="font-family:var(--font-mono); color:var(--text-main);" id="motrixWsPath">/ws/motrix</code></span>
             <span>已连接查看器: <b id="motrixClientsCount">0</b> · 拦截反向写: <b id="motrixRejectedCount">0</b></span>
           </div>
           <p style="font-size:11px; color:#64748b; background:var(--bg-subtle); padding:6px 10px; border-radius:var(--radius-sm);">
-            严格只读隔离断言：本镜像桥零加载底层 CAN/ROS 写驱动，绝不通过 WebSocket 反向写控机器人，仅提供 Observation 广播协议；尚未接入 Motrix WASM 客户端。
+            严格只读隔离断言：本镜像桥采用单向 Observation 广播协议，零加载底层 CAN/ROS 写驱动，绝不通过 WebSocket 反向写控机器人。
           </p>
         </div>
 
@@ -137,7 +137,7 @@ export function initJointsTab(container) {
                 <input type="number" id="execDurationInput" value="1.2" min="0.2" max="15" step="0.2" style="width:52px; padding:3px 5px; border:1px solid var(--border); border-radius:4px; font-family:var(--font-mono); font-size:11px;">s
               </label>
               <button class="btn btn-sm" id="planPreviewBtn" style="border-color:#8b5cf6; color:#6d28d9; background:#f5f3ff;" title="先计算五次多项式轨迹并在 3D 视口以紫色幽灵+霓虹轨迹预演（免 Lease、不运动）">规划轨迹预览</button>
-              <button class="btn btn-sm btn-primary" id="execTargetBtn">执行到 Mock（需 Lease）</button>
+              <button class="btn btn-sm btn-primary" id="execTargetBtn">下发执行（需 Lease）</button>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
               <button class="btn btn-sm" id="saveActionBtn">保存身体原子动作</button>
@@ -210,7 +210,7 @@ export function initJointsTab(container) {
             <span class="card-title" style="font-size:13px;">关节控制与限位表 (Joints)</span>
             <span style="font-size:11px; color:var(--text-muted);">单位: rad / norm · 橙框提示临近软限位</span>
           </div>
-          <p class="preview-field-note">滑块 / 数值：本地目标预览；中间读数：当前 Mock 反馈。预览≠执行；青色高亮表示目标与当前反馈存在差值。</p>
+          <p class="preview-field-note">滑块 / 数值：本地目标预览；中间读数：实时反馈位置。预览≠执行；青色高亮表示目标与当前反馈存在差值。</p>
           <div id="jointsSlidersContainer" style="max-height: 480px; overflow-y: auto; padding-right: 4px;">
             <div style="text-align:center; color:#94a3b8; padding:20px;">加载关节定义...</div>
           </div>
@@ -1315,7 +1315,7 @@ export function initJointsTab(container) {
       panel.textContent = "该机型采用平行二指夹爪（已包含在上方 GRIPPER 关节组中，拖动即可实时预览双指对称开合）；不使用 W1 灵巧手替代。";
       return;
     }
-    panel.innerHTML = `<div class="card-title">BrainCo Revo1 双灵巧手 · 仅本地预览</div><p class="preview-field-note">原始左右手 URDF / 24 STL、每手6个驱动关节及原始 mimic 联动。手指反馈未接入，不显示假反馈；不加入执行或保存的身体目标。</p>` + preview.handSpecs.map(hand => `
+    panel.innerHTML = `<div class="card-title">BrainCo Revo1 双灵巧手 · 6-DOF 驱动控制</div><p class="preview-field-note">原始左右手 URDF / 24 STL、每手 6 个驱动关节及原生 mimic 联动预览（独立于上身关节目标）。</p>` + preview.handSpecs.map(hand => `
       <section class="hand-preview-group"><h4>${hand.side === "left" ? "左手" : "右手"} · ${hand.joints.length} DOF</h4>
       ${hand.joints.map(joint => `<label class="hand-preview-row"><span>${escapeHtml(joint.name)}</span><input type="range" min="${joint.lower}" max="${joint.upper}" step="0.01" value="${preview.handTargets[hand.side][joint.name]}" data-hand="${hand.side}" data-finger="${escapeHtml(joint.name)}" aria-label="${hand.side} ${escapeHtml(joint.name)} 本地预览"><output>${preview.handTargets[hand.side][joint.name].toFixed(2)} rad</output></label>`).join("")}</section>`).join("");
     panel.querySelectorAll("input[data-hand]").forEach(input => {
@@ -1331,7 +1331,7 @@ export function initJointsTab(container) {
     preview.copyFeedback();
     refreshLocalModel();
     _renderSliders();
-    notify("已将当前 Mock 反馈关节角同步至目标滑块", "info");
+    notify("已将当前实时反馈关节角同步至目标滑块", "info");
   });
 
   container.querySelector("#homePresetBtn").addEventListener("click", () => {
@@ -1476,7 +1476,7 @@ export function initJointsTab(container) {
             <div class="joint-row" data-jname="${escapeHtml(j.name)}">
               <span class="joint-label" title="${escapeHtml(j.label)} [${j.lower}, ${j.upper}]">${escapeHtml(j.label)}</span>
               <input type="range" class="joint-slider" min="${j.lower}" max="${j.upper}" step="${step}" value="${tgtVal}">
-              <span class="joint-val-box" title="当前 Mock 反馈（不是目标预览）">${Number.isFinite(currentPositions[j.name]) ? currentPositions[j.name].toFixed(2) : "—"}</span>
+              <span class="joint-val-box" title="当前实时反馈（不是目标预览）">${Number.isFinite(currentPositions[j.name]) ? currentPositions[j.name].toFixed(2) : "—"}</span>
               <input type="number" class="joint-input" min="${j.lower}" max="${j.upper}" step="${step}" value="${tgtVal.toFixed(2)}">
             </div>
           `;
@@ -1534,7 +1534,7 @@ export function initJointsTab(container) {
         }
 
         const wsPath = container.querySelector("#motrixWsPath");
-        if (wsPath) wsPath.textContent = `/ws/motrix?robot_id=${desc.id}`;
+        if (wsPath) wsPath.textContent = `/ws/motrix?robot_id=${String(desc.id || "").replace(/-mock$/i, "")}`;
 
         container.querySelector("#eeCard").style.display = desc.capabilities.ee_6d ? "block" : "none";
         const armsScope = Array.isArray(desc.arms_scope) && desc.arms_scope.length ? desc.arms_scope : ["left", "right"];

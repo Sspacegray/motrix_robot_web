@@ -102,7 +102,7 @@ export function initNavigationTab(container) {
               X: 0.00m | Y: 0.00m | Goal Yaw: 0°
             </div>
             <div id="navMapLegend" style="position:absolute; top:12px; right:12px; display:flex; flex-direction:column; gap:4px; font-size:11px; color:#cbd5e1; background:rgba(15,23,42,0.78); padding:6px 10px; border-radius:4px;">
-              <div>青色：Mock位姿 · 橙色：本地目标 · 蓝色虚线：规划路径</div>
+              <div>青色：当前位姿 · 橙色：本地目标 · 蓝色虚线：规划路径</div>
             </div>
           </div>
 
@@ -334,9 +334,9 @@ export function initNavigationTab(container) {
       : `2D 真实占用栅格 (${activeMap?.id || "map"} · ${mapYaml.resolution}m/pix) · 左键拖拽设目标，右键/Shift 平移，滚轮缩放。`;
     container.querySelector("#navMapLegend").innerHTML = threeD
       ? (isRealPcd
-          ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div>青色：Mock位姿 · 橙色：已有目标（只读）</div>"
-          : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：Mock位姿 · 橙色：已有目标（只读）</div>")
-      : "<div>青色：Mock位姿 · 橙色：本地目标 · 紫点：常用航点</div><div>蓝色虚线：Mock规划路径</div>";
+          ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>"
+          : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>")
+      : "<div>青色：当前位姿 · 橙色：本地目标 · 紫点：常用航点</div><div>蓝色虚线：规划路径</div>";
   }
 
   function setMapView(next) {

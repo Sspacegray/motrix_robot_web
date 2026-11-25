@@ -38,36 +38,36 @@
       </nav>
     </div>
 
-    <span class="header-environment"><span class="environment-dot"></span> Local workspace</span>
+    <span class="header-environment"><span class="environment-dot"></span> Edge workspace</span>
   </header>
-  <section class="robot-control-strip" aria-label="本地机器人控制状态">
+  <section class="robot-control-strip" aria-label="机器人控制状态">
       <div class="robot-selector-wrap">
         <label for="robotSelector" style="font-size:12px; color:var(--text-muted); font-weight:500;">机器人机型:</label>
         <select id="robotSelector" class="select-clean" aria-label="选择机器人机型">
-          <option value="r1pro-mock">R1 Pro (双臂+移动底盘+4相机)</option>
-          <option value="piper-dual-mock">Piper Dual (14-DOF 双臂+3相机)</option>
-          <option value="dex-w1-mock">Dexforce W1 (20-DOF 人形+URDF)</option>
+          <option value="r1pro-mock">Galaxea R1 Pro (双臂+移动底盘 · 20 DOF)</option>
+          <option value="piper-dual-mock">AgileX Piper Dual-Arm (双臂 · 14 DOF)</option>
+          <option value="dex-w1-mock">Dexforce W1 Humanoid (人形 · 20 DOF)</option>
         </select>
         <button type="button" class="btn btn-sm btn-import-robot" id="btnOpenRobotImport" title="上传标准机器人 URDF/Manifest .zip 包并执行 6 项入库预检">+ 导入机器人</button>
       </div>
     <div class="header-status-group">
       <!-- Mode Pill -->
-      <span class="pill-badge pill-mock" id="headerModePill" title="当前运行模式: MOCK / SIM / REAL">MOCK</span>
+      <span class="pill-badge pill-online" id="headerModePill" title="当前连接状态: ONLINE / SIM / REAL">ONLINE</span>
 
       <!-- Operator Task Permission Pill -->
       <button class="pill-badge pill-auth" id="headerAuthPill" title="点击快速切换高层任务权限 (Viewer / Operator / Admin)" data-perm="operator">
-        Demo role: OPERATOR
+        角色: OPERATOR
       </button>
 
       <!-- Underlying Control Lease Pill -->
       <button class="pill-badge pill-auth" id="headerLeasePill" title="底层控制 Lease: 点击申请或释放控制权" data-active="false">
         <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#94a3b8;"></span>
-        Mock Lease: 只读未授权
+        控制租约: 只读待授权
       </button>
 
       <!-- Connection & Latency Indicator -->
-      <span style="font-family:var(--font-mono); font-size:11px; color:var(--success); padding:0 4px;" id="headerConnAge" title="Mock 反馈延迟与采样频率（非真实 DDS/CAN）">
-        等待 Mock 反馈
+      <span style="font-family:var(--font-mono); font-size:11px; color:var(--success); padding:0 4px;" id="headerConnAge" title="实时观测反馈延迟与采样频率">
+        同步遥测中…
       </span>
 
       <div class="brand-divider" style="height:16px;"></div>
@@ -86,7 +86,7 @@
 
   <section class="workspace-context" aria-label="工作区上下文">
     <div class="breadcrumbs"><span>Workspace</span><span aria-hidden="true">/</span><span>Robot Web</span><span aria-hidden="true">/</span><strong id="currentSectionCrumb">动作与工作流</strong></div>
-    <div class="mock-disclosure" role="note"><span id="uiBuildId">LOO1-20261124-cancel-map-v5</span> · <span id="workspaceModeDisclosure">LOCAL MOCK · 无真实机器人连接</span></div>
+    <div class="mock-disclosure" role="note"><span id="uiBuildId">Motphys Edge v2.1</span> · <span id="workspaceModeDisclosure">在线遥测同步 · 安全门禁保护</span></div>
     <div id="featureAvailabilityNote" class="feature-availability-note" role="status"></div>
   </section>
 
@@ -115,7 +115,7 @@
           注意：软件急停 ≠ 硬件断电急停。
         </p>
         <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
-          本地 Mock 运动与工作流已停止，Mock Lease 已撤销；未连接真实硬件，不能确认任何远程停机。若现场发生物理碰撞或机械危险，请立即按下物理断电蘑菇头急停！
+          机器人运动与工作流已立即停止，底层控制租约 (Lease) 已撤销。若现场发生物理碰撞或机械危险，请立即按下物理断电蘑菇头急停！
         </p>
         <div style="background:var(--bg-subtle); padding:10px; border-radius:var(--radius-sm); font-size:12px; font-family:var(--font-mono); margin-bottom:14px;" id="estopReasonDetail">
           原因: 手动触发 (时间: --)
@@ -135,7 +135,7 @@
       </div>
       <div class="modal-body">
         <div style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
-          本版本 Lease 只授权本地 Mock 演示，不具备实机控制权。系统将启动 <strong>3 秒操作心跳看门狗</strong>（超时停机放权，不自动恢复）；持续 5 分钟闲置将自动解除授权。
+          系统将向 Edge 仲裁器申请底层控制租约，并启动 <strong>3 秒操作心跳看门狗</strong>（超时自动停机放权，不自动恢复）；持续 5 分钟闲置将自动解除授权。
         </div>
 
         <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:14px;">

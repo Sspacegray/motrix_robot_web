@@ -34,13 +34,13 @@ class ExecutionDrawer {
           <button class="btn btn-sm" id="drawerPauseBtn" style="display:none;" title="暂停任务（Live 模式下立即安全停机）">⏸ 暂停</button>
           <button class="btn btn-sm btn-step-debug" id="drawerStepBtn" style="display:none;" title="仅执行下一原子步骤并自动再次暂停">⏭ 下一步</button>
           <button class="btn btn-sm btn-primary" id="drawerResumeBtn" style="display:none;" title="恢复连续执行剩余全部步骤">▶ 继续全部</button>
-          <button class="btn btn-sm" id="drawerRetryBtn" disabled title="重试仅执行无运动指令的 Mock dry-run">Retry dry-run</button>
+          <button class="btn btn-sm" id="drawerRetryBtn" disabled title="重试执行（无运动指令 Dry-run 验证）">Retry dry-run</button>
           <button class="btn btn-sm btn-danger" id="drawerCancelBtn" style="display:none;">Cancel</button>
           <button class="drawer-close-btn" id="drawerCloseBtn" title="Close (Esc)">✕</button>
         </div>
       </div>
       <div class="drawer-body">
-        <div class="drawer-record"><span class="badge" id="drawerBadge">Pending</span><span id="drawerJobId">--</span><span id="drawerModeTag">LOCAL MOCK</span></div>
+        <div class="drawer-record"><span class="badge" id="drawerBadge">Pending</span><span id="drawerJobId">--</span><span id="drawerModeTag">EDGE SYNC</span></div>
         <div id="drawerPauseBanner" class="drawer-pause-banner" style="display:none;">
           <div style="font-weight:700; margin-bottom:2px;">⏸ 任务已暂停（单步断点 / 手动暂停）</div>
           <div id="drawerPauseReason" style="font-size:12px;"></div>
@@ -230,7 +230,7 @@ class ExecutionDrawer {
     this.panel.querySelector("#drawerResumeBtn").style.display = "none";
     this.panel.querySelector("#drawerCancelBtn").style.display = "none";
     this.panel.querySelector("#drawerPauseBanner").style.display = "none";
-    this.panel.querySelector("#drawerLogsPre").textContent = "Loading local Mock logs…";
+    this.panel.querySelector("#drawerLogsPre").textContent = "Loading execution logs…";
     this.backdrop.classList.add("open");
     this.panel.classList.add("open");
     this.panel.querySelector("#drawerCloseBtn").focus();

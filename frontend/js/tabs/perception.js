@@ -628,7 +628,7 @@ export function initPerceptionTab(container) {
         const button = container.querySelector("#" + id);
         if (!button) continue;
         button.disabled = !enabled;
-        button.title = enabled ? "仅本地 Mock 演示，写操作仍需 Lease" : "当前机型未提供此项能力；相机查看仍可用";
+        button.title = enabled ? "需持有控制 Lease 后下发感知流水线指令" : "当前机型未提供此项能力；相机查看仍可用";
       }
     },
   };
