@@ -1345,9 +1345,59 @@ dialog.robot-import-dialog:modal {width:min(940px, calc(100vw - 32px)); max-widt
   color: #ffffff;
   box-shadow: none;
 }
-.nav-route-pill {
+.nav-map-tool-btn.active-edit {
+  background: rgba(244, 63, 94, 0.24);
+  color: #fda4af;
+  box-shadow: inset 0 0 0 1px rgba(244, 63, 94, 0.55);
+}
+.nav-map-light .nav-map-tool-btn.active-edit {
+  background: #e11d48;
+  color: #ffffff;
+  box-shadow: none;
+}
+.nav-map-tool-btn.active-erase {
+  background: rgba(16, 185, 129, 0.24);
+  color: #6ee7b7;
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.52);
+}
+.nav-map-light .nav-map-tool-btn.active-erase {
+  background: #059669;
+  color: #ffffff;
+  box-shadow: none;
+}
+.nav-edit-bar {
   position: absolute;
   top: 52px;
+  left: 12px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.90);
+  border: 1px solid rgba(244, 63, 94, 0.38);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(10px);
+}
+.nav-edit-bar[hidden] {display: none !important;}
+.nav-map-light .nav-edit-bar {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(225, 29, 72, 0.36);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.10);
+}
+.nav-edit-count {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: #94a3b8;
+  padding: 0 5px;
+  user-select: none;
+}
+.nav-map-light .nav-edit-count {color: #64748b;}
+.nav-route-pill {
+  position: absolute;
+  bottom: 46px;
   left: 12px;
   z-index: 4;
   display: inline-flex;

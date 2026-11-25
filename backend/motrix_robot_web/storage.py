@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .safety import utc_iso
-from .schemas import AtomicAction, ExecutionJob, JobStep, LoopRecord, NavWaypoint, WorkflowDefinition, WorkflowStep
+from .schemas import AtomicAction, ExecutionJob, JobStep, LoopRecord, MapEditOverlay, NavWaypoint, WorkflowDefinition, WorkflowStep
 
 
 def _safe_finite(val: Any, default: float = 0.0) -> float:
@@ -443,12 +443,14 @@ class LocalStore:
         self.jobs_path = self.data_dir / "jobs.json"
         self.loop_path = self.data_dir / "loop_records.json"
         self.waypoints_path = self.data_dir / "waypoints.json"
+        self.map_edits_path = self.data_dir / "map_edits.json"
 
         self.actions: dict[str, AtomicAction] = {}
         self.workflows: dict[str, WorkflowDefinition] = {}
         self.jobs: dict[str, ExecutionJob] = {}
         self.loop_records: dict[str, LoopRecord] = {}
         self.waypoints: dict[str, NavWaypoint] = {}
+        self.map_edits: dict[str, MapEditOverlay] = {}
         self._load_or_seed()
 
     def _load_or_seed(self) -> None:
@@ -524,6 +526,15 @@ class LocalStore:
                 self.waypoints[wp.id] = wp
             self._save_waypoints()
 
+        if self.map_edits_path.exists():
+            try:
+                raw = json.loads(self.map_edits_path.read_text(encoding="utf-8"))
+                for item in raw.get("overlays", []):
+                    ov = MapEditOverlay.model_validate(item)
+                    self.map_edits[ov.map_id] = ov
+            except Exception:
+                self.map_edits = {}
+
     def _save_actions(self) -> None:
         payload = {"version": 2, "actions": [a.model_dump() for a in self.actions.values()]}
         _atomic_write_json(self.actions_path, payload)
@@ -544,6 +555,10 @@ class LocalStore:
     def _save_waypoints(self) -> None:
         payload = {"version": 1, "waypoints": [w.model_dump() for w in self.waypoints.values()]}
         _atomic_write_json(self.waypoints_path, payload)
+
+    def _save_map_edits(self) -> None:
+        payload = {"version": 1, "overlays": [ov.model_dump() for ov in self.map_edits.values()]}
+        _atomic_write_json(self.map_edits_path, payload)
 
     # ---- Actions ----
     def list_actions(self, robot_id: str | None = None) -> list[AtomicAction]:
@@ -863,3 +878,43 @@ class LocalStore:
             self._save_waypoints()
             return True
         return False
+
+    # ---- 2D Occupancy Map Non-Destructive Edits (Virtual Walls + Noise Eraser + Denoise Level) ----
+    def get_map_edits(self, map_id: str) -> MapEditOverlay:
+        mid = str(map_id or "fast_slam_20260914").strip()
+        existing = self.map_edits.get(mid)
+        if existing is not None:
+            return existing
+        return MapEditOverlay(map_id=mid, denoise_level=1, virtual_walls=[], erase_strokes=[], updated_at="")
+
+    def save_map_edits(self, map_id: str, data: dict[str, Any]) -> MapEditOverlay:
+        mid = str(map_id or "").strip()
+        if not mid:
+            raise ValueError("map_id is required")
+        walls = list(data.get("virtual_walls") or [])[:200]
+        strokes = list(data.get("erase_strokes") or [])[:400]
+        for st in strokes:
+            if isinstance(st, dict) and isinstance(st.get("points"), list):
+                st["points"] = [
+                    [_safe_finite(p[0]), _safe_finite(p[1])]
+                    for p in st["points"][:300]
+                    if isinstance(p, (list, tuple)) and len(p) >= 2
+                ]
+        payload = {
+            "map_id": mid,
+            "denoise_level": int(data.get("denoise_level", 1)),
+            "virtual_walls": walls,
+            "erase_strokes": strokes,
+            "updated_at": utc_iso(),
+        }
+        ov = MapEditOverlay.model_validate(payload)
+        self.map_edits[mid] = ov
+        self._save_map_edits()
+        return ov
+
+    def reset_map_edits(self, map_id: str) -> MapEditOverlay:
+        mid = str(map_id or "").strip()
+        if mid in self.map_edits:
+            del self.map_edits[mid]
+            self._save_map_edits()
+        return MapEditOverlay(map_id=mid, denoise_level=1, virtual_walls=[], erase_strokes=[], updated_at=utc_iso())

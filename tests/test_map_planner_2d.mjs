@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { analyzeOccupancyGrid, queryCellInfo, castLidarScan, planGridPathAStar } from "../frontend/js/map-planner-2d.js";
+import {
+  analyzeOccupancyGrid,
+  exportNav2OccupancyRgba,
+  queryCellInfo,
+  castLidarScan,
+  planGridPathAStar,
+} from "../frontend/js/map-planner-2d.js";
 
 function makeRoomRgba(w, h, wallPredicate) {
   const rgba = new Uint8ClampedArray(w * h * 4);
@@ -64,4 +70,60 @@ test("castLidarScan hits surrounding room walls accurately", () => {
 test("map-planner-2d stays strictly read-only with zero control API imports", async () => {
   const src = await readFile(new URL("../frontend/js/map-planner-2d.js", import.meta.url), "utf8");
   assert.doesNotMatch(src, /import.*api\.js|fetch\(|\/api\//);
+});
+
+test("denoiseLevel=2 removes floating 3x3 obstacle cluster while preserving real walls", () => {
+  const w = 60, h = 60;
+  // Floating 3x3 ghost cluster (9 pixels) in center + long real wall segment at x=15
+  const rgba = makeRoomRgba(w, h, (x, y) =>
+    (x >= 29 && x <= 31 && y >= 29 && y <= 31) || (x === 15 && y >= 5 && y <= 45)
+  );
+  const light = analyzeOccupancyGrid(rgba, w, h, 0.1, { denoiseLevel: 1 });
+  assert.equal(queryCellInfo(light, 30, 30).state, "occupied");
+
+  const strong = analyzeOccupancyGrid(rgba, w, h, 0.1, { denoiseLevel: 2 });
+  assert.equal(queryCellInfo(strong, 30, 30).state, "free");
+  assert.equal(queryCellInfo(strong, 15, 25).state, "occupied", "structural wall must stay intact");
+  assert.ok(strong.stats.removedClusters >= 1 && strong.stats.removedPixels >= 9);
+});
+
+test("virtualWalls block A* routing and inflate costmap while physical LiDAR passes through", () => {
+  const w = 80, h = 60;
+  // Wall with doorway at y=45..58
+  const rgba = makeRoomRgba(w, h, (x, y) => x >= 39 && x <= 41 && y < 45);
+  // Seal the doorway with a virtual wall from (40, 42) to (40, 59)
+  const grid = analyzeOccupancyGrid(rgba, w, h, 0.1, {
+    denoiseLevel: 1,
+    virtualWalls: [{ x1: 40, y1: 42, x2: 40, y2: 59, thicknessPx: 3.5 }],
+  });
+  assert.equal(queryCellInfo(grid, 40, 50).state, "occupied");
+  assert.equal(grid.physicalCls[50 * w + 40], 1, "physical occupancy stays free under software virtual wall");
+
+  const blocked = planGridPathAStar(grid, 15, 15, 65, 15, { robotRadiusM: 0.25 });
+  assert.equal(blocked.ok, false, "A* must refuse to cross virtual wall sealing the doorway");
+
+  // Physical LiDAR shining east at y=50 should pass straight through the virtual wall to x=79
+  const scan = castLidarScan(grid, 20, 50, 0, { rays: 4, maxRangeM: 10.0 });
+  assert.ok(scan[0].distM > 5.0, `physical LiDAR should pass virtual wall, got ${scan[0].distM}m`);
+
+  // Exported Nav2 RGBA bakes the virtual wall as occupied (0)
+  const nav2Rgba = exportNav2OccupancyRgba(grid);
+  assert.equal(nav2Rgba[(50 * w + 40) * 4], 0);
+  assert.equal(nav2Rgba[(15 * w + 15) * 4], 254);
+});
+
+test("eraseStrokes clears obstacles and opens a previously blocked doorway for A*", () => {
+  const w = 80, h = 60;
+  // Solid wall sealing entire room vertically at x=40
+  const rgba = makeRoomRgba(w, h, (x) => x >= 39 && x <= 41);
+  const sealed = analyzeOccupancyGrid(rgba, w, h, 0.1);
+  assert.equal(planGridPathAStar(sealed, 15, 30, 65, 30, { robotRadiusM: 0.2 }).ok, false);
+
+  // Erase a doorway around (40, 30) with radius 6px
+  const opened = analyzeOccupancyGrid(rgba, w, h, 0.1, {
+    eraseStrokes: [{ pointsPx: [[38, 30], [42, 30]], radiusPx: 6.5 }],
+  });
+  assert.ok(opened.stats.erasedPixels > 20);
+  const routed = planGridPathAStar(opened, 15, 30, 65, 30, { robotRadiusM: 0.2 });
+  assert.equal(routed.ok, true, "erased opening must allow A* through");
 });

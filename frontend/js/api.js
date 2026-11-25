@@ -106,6 +106,19 @@ export class RobotApi {
     return res.json();
   }
 
+  async put(path, body = {}) {
+    const res = await fetch(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || res.statusText);
+    }
+    return res.json();
+  }
+
   async delete(path) {
     const res = await fetch(path, { method: "DELETE" });
     if (!res.ok) {
@@ -244,12 +257,29 @@ export class RobotApi {
     return this.delete(`/api/navigation/waypoints/${waypointId}`);
   }
 
+  getMapEdits(mapId) {
+    const q = new URLSearchParams({ map_id: mapId || "fast_slam_20260914" });
+    return this.get(`/api/navigation/map-edits?${q.toString()}`);
+  }
+
+  saveMapEdits(mapId, data) {
+    return this.put(`/api/navigation/map-edits/${encodeURIComponent(mapId)}`, data);
+  }
+
+  resetMapEdits(mapId) {
+    return this.delete(`/api/navigation/map-edits/${encodeURIComponent(mapId)}`);
+  }
+
   setNavMode(mode) {
     return this.post(`/api/robots/${this.currentRobotId}/navigation/mode`, { mode });
   }
 
-  sendNavGoal(x, y, yaw = 0) {
-    return this.post(`/api/robots/${this.currentRobotId}/navigation/goal`, { x, y, yaw });
+  sendNavGoal(x, y, yaw = 0, pathPoints = null) {
+    const payload = { x, y, yaw };
+    if (Array.isArray(pathPoints) && pathPoints.length >= 2) {
+      payload.path_points = pathPoints;
+    }
+    return this.post(`/api/robots/${this.currentRobotId}/navigation/goal`, payload);
   }
 
   cancelNav() {

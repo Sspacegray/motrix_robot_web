@@ -44,7 +44,9 @@ class RobotConnector(ABC):
         """Switch MANUAL / NAVIGATION / FAULT authority."""
 
     @abstractmethod
-    def send_navigation_goal(self, x: float, y: float, yaw: float) -> dict[str, Any]:
+    def send_navigation_goal(
+        self, x: float, y: float, yaw: float, path_points: list[list[float]] | None = None
+    ) -> dict[str, Any]:
         """Send 2D navigation goal in map frame."""
 
     @abstractmethod

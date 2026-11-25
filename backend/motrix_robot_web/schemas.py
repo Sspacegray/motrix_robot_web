@@ -99,6 +99,7 @@ class Ros2BridgeConfig(BaseModel):
     joint_cmd_type: Literal["sensor_msgs/msg/JointState", "trajectory_msgs/msg/JointTrajectory"] = "sensor_msgs/msg/JointState"
     cmd_vel_topic: str = "/cmd_vel"
     nav_goal_topic: str = "/goal_pose"
+    nav_plan_topic: str = "/plan"
 
 
 class RobotDescriptor(BaseModel):
@@ -178,6 +179,7 @@ class NavigationState(BaseModel):
     goal_map: dict[str, float] | None = None
     chassis_vel: dict[str, float] = Field(default_factory=lambda: {"vx": 0.0, "vy": 0.0, "omega": 0.0})
     path_points: list[list[float]] = Field(default_factory=list)
+    path_source: str = ""
 
 
 class PerceptionState(BaseModel):
@@ -420,6 +422,34 @@ class NavGoalRequest(BaseModel):
     x: float
     y: float
     yaw: float = 0.0
+    path_points: list[list[float]] | None = None
+
+
+class VirtualWall(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    id: str
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    thickness_m: float = Field(default=0.16, ge=0.05, le=1.5)
+    label: str = ""
+
+
+class EraseStroke(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    id: str
+    points: list[list[float]] = Field(default_factory=list)
+    radius_m: float = Field(default=0.35, ge=0.05, le=3.0)
+
+
+class MapEditOverlay(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    map_id: str
+    denoise_level: int = Field(default=1, ge=0, le=2)
+    virtual_walls: list[VirtualWall] = Field(default_factory=list)
+    erase_strokes: list[EraseStroke] = Field(default_factory=list)
+    updated_at: str = ""
 
 
 class NavWaypoint(BaseModel):
