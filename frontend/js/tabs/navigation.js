@@ -1,7 +1,7 @@
 // Tab 3: R1 Pro Real 2D Occupancy Maps, Real 3D LiDAR Point Cloud (.pcd), Waypoints & Chassis Teleop
 import { api } from "../api.js";
 import { occupancyToPointCloud, lumaFromRgba, MOCK_CLOUD_LABEL } from "../map-cloud.js";
-import { parsePcdBuffer, buildColoredPcdCloud, RECORDED_PCD_LABEL } from "../pcd-loader.js";
+import { parsePcdBuffer, filterDynamicObstacles3D, buildColoredPcdCloud, RECORDED_PCD_LABEL } from "../pcd-loader.js";
 import { createMapCloudViewer } from "../map-cloud-viewer.js";
 import { bindMapInteractions } from "../map-interactions.js";
 import {
@@ -39,6 +39,7 @@ export function initNavigationTab(container) {
   let currentParsedPcd = null;
   let cloudColorMode = "height";
   let cloudZMax = 2.0;
+  let cloudCleanDynamic = true;
   let goalPose = null; // { x, y, yaw }
   let isDraggingGoal = false;
   let dragStartPos = null;
@@ -91,6 +92,7 @@ export function initNavigationTab(container) {
               <button type="button" class="cloud-mode-btn" data-cloud-mode="plan_waypoints" aria-pressed="false" title="依次左键点击 3D 点云规划多航点路径 P1→P2→P3">点云多点规划</button>
             </div>
             <div class="cloud-plan-actions">
+              <button type="button" class="btn btn-sm" id="cloudCleanDynamicBtn" aria-pressed="true" title="基于 3D 密度/连通域 + 2D 走廊自由空间雕刻，自动消除建图时残留的行人/移动物体鬼影">消除动态障碍 ✓</button>
               <button type="button" class="btn btn-sm" id="cloudUndoWpBtn" disabled title="撤销最近一个 3D 点云航点">撤销点</button>
               <button type="button" class="btn btn-sm" id="cloudClearWpBtn" disabled title="清空当前 3D 点云规划航点">清空</button>
               <button type="button" class="btn btn-sm btn-primary" id="cloudDispatchNavBtn" disabled title="直接按当前 3D 点云规划路径与航点序列下发导航">按点云路径导航</button>
@@ -396,6 +398,8 @@ export function initNavigationTab(container) {
     cloudTravGrid = buildCloudTraversabilityGrid(cloudRawSource.positions, cloudRawSource.count, {
       resolution: 0.14,
       virtualWallsWorld: mapEdits.virtualWalls || [],
+      aligned2dGrid: styledMapCache.grid,
+      mapYaml,
     });
     cloudViewer.setTraversabilityGrid(cloudTravGrid);
     recomputeCloudRoute(true);
@@ -763,9 +767,15 @@ export function initNavigationTab(container) {
         }
       }
       currentParsedPcd = parsed;
-      cloudRawSource = { positions: parsed.positions, count: parsed.count };
+      const effectivePcd = cloudCleanDynamic
+        ? filterDynamicObstacles3D(parsed, {
+            aligned2dGrid: styledMapCache.grid,
+            mapYaml,
+          })
+        : parsed;
+      cloudRawSource = { positions: effectivePcd.positions, count: effectivePcd.count };
       rebuildCloudTravGrid();
-      const colored = buildColoredPcdCloud(parsed, {
+      const colored = buildColoredPcdCloud(effectivePcd, {
         colorMode: cloudColorMode,
         zMin: Math.min(-0.6, parsed.bounds.minZ),
         zMax: cloudZMax,
@@ -889,7 +899,11 @@ export function initNavigationTab(container) {
     if (mapImage && mapImage.complete && mapImage.naturalWidth) {
       const styled = buildStyledMap(mapImage);
       recomputePreviewRoute(true);
-      rebuildCloudTravGrid();
+      if (currentParsedPcd && mapView === "cloud3d" && cloudCleanDynamic) {
+        ensureActiveCloud(true);
+      } else {
+        rebuildCloudTravGrid();
+      }
       drawMap();
       if (toastStats && styled?.grid?.stats) {
         const st = styled.grid.stats;
@@ -1027,6 +1041,25 @@ export function initNavigationTab(container) {
   });
 
   // Real 3D PCD & Point-Cloud Planning Controls
+  const cleanDynBtn = container.querySelector("#cloudCleanDynamicBtn");
+  function updateCleanDynamicBtn() {
+    if (!cleanDynBtn) return;
+    cleanDynBtn.setAttribute("aria-pressed", cloudCleanDynamic ? "true" : "false");
+    cleanDynBtn.textContent = cloudCleanDynamic ? "消除动态障碍 ✓" : "消除动态障碍";
+    cleanDynBtn.style.background = cloudCleanDynamic ? "rgba(16, 185, 129, 0.16)" : "";
+    cleanDynBtn.style.borderColor = cloudCleanDynamic ? "#10b981" : "";
+    cleanDynBtn.style.color = cloudCleanDynamic ? "#047857" : "";
+  }
+  updateCleanDynamicBtn();
+  cleanDynBtn?.addEventListener("click", () => {
+    cloudCleanDynamic = !cloudCleanDynamic;
+    updateCleanDynamicBtn();
+    if (currentParsedPcd) {
+      ensureActiveCloud(true);
+      notify(cloudCleanDynamic ? "已开启 3D 动态障碍物消除（剔除走廊行人鬼影并重算 3D 路径）" : "已关闭 3D 动态障碍消除，显示原始建图点云", "info");
+    }
+  });
+
   container.querySelectorAll("[data-cloud-mode]").forEach(btn => {
     btn.addEventListener("click", () => setCloudMode(btn.dataset.cloudMode));
   });

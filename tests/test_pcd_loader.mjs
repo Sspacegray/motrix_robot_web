@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../frontend/js/pcd-loader.js', import.meta.url), 'utf8');
-const { parsePcdBuffer, buildColoredPcdCloud, RECORDED_PCD_SOURCE } = await import(
+const { parsePcdBuffer, filterDynamicObstacles3D, buildColoredPcdCloud, RECORDED_PCD_SOURCE } = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 );
 
@@ -96,4 +96,41 @@ test('slices ceiling by zMax and colorizes across height, intensity, and semanti
 
 test('pcd-loader has zero control API or network fetch dependencies', () => {
   assert.doesNotMatch(source, /import.*api\.js|fetch\(|XMLHttpRequest|WebSocket/);
+});
+
+test('filterDynamicObstacles3D removes floating corridor pedestrian ghosts while keeping walls and floor', () => {
+  const pts = [];
+  // Floor at z=0.0
+  for (let x = 0; x <= 6; x += 0.2) {
+    for (let y = 0; y <= 6; y += 0.2) {
+      pts.push([x, y, 0.0, 20]);
+    }
+  }
+  // Dense continuous static wall along x=0.2 (spanning y=0..6, z=0.2..1.8)
+  for (let y = 0; y <= 6; y += 0.1) {
+    for (let z = 0.2; z <= 1.8; z += 0.15) {
+      pts.push([0.2, y, z, 80]);
+    }
+  }
+  // Sparse transient walking-person ghost cluster floating in open corridor around (3.2, 3.2)
+  for (let k = 0; k < 12; k++) {
+    pts.push([3.2 + (k % 3) * 0.08, 3.2 + Math.floor(k / 3) * 0.06, 0.55 + (k % 4) * 0.2, 40]);
+  }
+  const parsed = parsePcdBuffer(makeBinaryPcd(pts));
+  const cleaned = filterDynamicObstacles3D(parsed);
+  assert.ok(cleaned.dynamicRemoved >= 10, `expected >=10 dynamic ghost pts removed, got ${cleaned.dynamicRemoved}`);
+  assert.ok(cleaned.count < parsed.count);
+
+  // Confirm static wall points at x≈0.2 and floor points at z≈0.0 survived intact
+  let wallKept = 0;
+  let ghostKept = 0;
+  for (let i = 0; i < cleaned.count; i++) {
+    const x = cleaned.positions[i * 3];
+    const y = cleaned.positions[i * 3 + 1];
+    const z = cleaned.positions[i * 3 + 2];
+    if (Math.abs(x - 0.2) < 0.1 && z > 0.3) wallKept++;
+    if (Math.hypot(x - 3.2, y - 3.2) < 0.35 && z > 0.3) ghostKept++;
+  }
+  assert.ok(wallKept > 300, `static wall points must survive, got ${wallKept}`);
+  assert.equal(ghostKept, 0, `floating corridor ghost points must be removed, got ${ghostKept}`);
 });

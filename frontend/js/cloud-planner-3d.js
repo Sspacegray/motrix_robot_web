@@ -61,6 +61,8 @@ export function buildCloudTraversabilityGrid(positions, count, {
   obsMaxH = 1.85,
   obsMinPts = null,
   virtualWallsWorld = [],
+  aligned2dGrid = null,
+  mapYaml = null,
   maxCellsPerAxis = 380,
 } = {}) {
   if (!positions || !count || count <= 0) return null;
@@ -211,6 +213,37 @@ export function buildCloudTraversabilityGrid(positions, count, {
       cls[i] = 1;
     } else {
       cls[i] = 0;
+    }
+  }
+
+  // When an aligned 2D SLAM occupancy grid is available, block unmapped exterior/courtyard void
+  // (prevents overhead roof beams over unmapped courtyards from appearing navigable!)
+  if (aligned2dGrid && mapYaml && Array.isArray(mapYaml.origin)) {
+    const g2w = aligned2dGrid.width;
+    const g2h = aligned2dGrid.height;
+    const g2res = Math.max(1e-4, Number(mapYaml.resolution) || aligned2dGrid.resolution || 0.05);
+    const g2ox = Number(mapYaml.origin[0]) || 0;
+    const g2oy = Number(mapYaml.origin[1]) || 0;
+    const pCls = aligned2dGrid.physicalCls || aligned2dGrid.cls;
+    if (pCls && pCls.length === g2w * g2h) {
+      for (let gy = 0; gy < height; gy++) {
+        const wy = originY + (gy + 0.5) * res;
+        const py = Math.floor(g2h - (wy - g2oy) / g2res);
+        const row = gy * width;
+        for (let gx = 0; gx < width; gx++) {
+          const idx = row + gx;
+          if (cls[idx] !== 1) continue;
+          const wx = originX + (gx + 0.5) * res;
+          const px = Math.floor((wx - g2ox) / g2res);
+          if (px < 0 || px >= g2w || py < 0 || py >= g2h) {
+            cls[idx] = 0;
+          } else {
+            const c2 = pCls[py * g2w + px];
+            if (c2 === 0) cls[idx] = 0;
+            else if (c2 === 2) cls[idx] = 2;
+          }
+        }
+      }
     }
   }
 

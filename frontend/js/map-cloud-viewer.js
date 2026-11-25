@@ -369,9 +369,12 @@ export function createMapCloudViewer({ canvas, hud, onHover = null, onPick = nul
       const extra = cloud.occupiedCells !== undefined
         ? `占用 ${cloud.occupiedCells} 格`
         : cloud.totalCount && cloud.totalCount !== cloud.count
-          ? `切片显示 ${cloud.count.toLocaleString()} / ${cloud.totalCount.toLocaleString()} 点`
+          ? `切片 ${cloud.count.toLocaleString()} / ${cloud.totalCount.toLocaleString()} 点`
           : `${cloud.count.toLocaleString()} 点`;
-      hud.textContent = `${cloud.label} · ${extra} · 非实时`;
+      const dynNote = cloud.dynamicRemoved > 0
+        ? ` · 已消除 ${cloud.dynamicRemoved.toLocaleString()} 动态鬼影点`
+        : "";
+      hud.textContent = `3D 点云 · ${extra}${dynNote} · 离线静态建图`;
     }
     root.updateMatrixWorld(true);
     if (!preserveCamera) resetView(cloud);

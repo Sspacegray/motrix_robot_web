@@ -150,6 +150,257 @@ function intensityColor(t) {
   return [0.15 + 0.85 * Math.pow(c, 0.7), 0.30 + 0.68 * c, 0.52 + 0.44 * (1 - Math.abs(c - 0.45))];
 }
 
+// Dual-stage offline 3D dynamic-obstacle / walking-ghost filter (zero API / network imports):
+// Stage A: Pure 3D column density + vertical Z-span + 8-connected blob pruning (removes sparse
+//          mid-air trails and small detached pedestrian blobs while keeping static walls, floor & ceiling).
+// Stage B: Optional aligned 2D occupancy free-space carving (carves mid-body 3D ghosts hovering above
+//          verified ray-carved 2D free corridors far from physical walls, plus honors 2D eraser strokes).
+export function filterDynamicObstacles3D(parsed, {
+  obsMinH = 0.16,
+  obsMaxH = 1.98,
+  colRes = 0.14,
+  aligned2dGrid = null,
+  mapYaml = null,
+  freeCarveMarginM = 0.24,
+} = {}) {
+  if (!parsed || !parsed.count || !parsed.positions) return parsed;
+  const pos = parsed.positions;
+  const inten = parsed.intensities;
+  const n = parsed.count;
+  const b = parsed.bounds;
+
+  // Estimate dominant ground floor Z from low points
+  let zSum = 0;
+  let zCnt = 0;
+  const sampleStride = n > 200000 ? 4 : 1;
+  for (let i = 0; i < n; i += sampleStride) {
+    const z = pos[i * 3 + 2];
+    if (z > -0.75 && z < 0.35) {
+      zSum += z;
+      zCnt++;
+    }
+  }
+  const zFloor = zCnt > 0 ? zSum / zCnt : Math.max(-0.5, Math.min(0.15, b.minZ));
+
+  // Stage A: 3D XY column obstacle density, vertical Z-span, and small-blob pruning
+  const ox = b.minX - 0.5;
+  const oy = b.minY - 0.5;
+  const spanX = Math.max(1.0, b.maxX - b.minX + 1.0);
+  const spanY = Math.max(1.0, b.maxY - b.minY + 1.0);
+  let res = Math.max(0.08, colRes);
+  if (Math.max(spanX, spanY) / res > 420) res = Math.max(spanX, spanY) / 420;
+  const w = Math.max(8, Math.ceil(spanX / res));
+  const h = Math.max(8, Math.ceil(spanY / res));
+  const cells = w * h;
+  const inv = 1.0 / res;
+
+  const obsCnt = new Uint16Array(cells);
+  const obsMinZ = new Float32Array(cells).fill(Infinity);
+  const obsMaxZ = new Float32Array(cells).fill(-Infinity);
+
+  for (let i = 0; i < n; i++) {
+    const o = i * 3;
+    const z = pos[o + 2];
+    const rh = z - zFloor;
+    if (rh < obsMinH || rh > obsMaxH) continue;
+    const gx = Math.floor((pos[o] - ox) * inv);
+    const gy = Math.floor((pos[o + 1] - oy) * inv);
+    if (gx < 0 || gx >= w || gy < 0 || gy >= h) continue;
+    const idx = gy * w + gx;
+    if (obsCnt[idx] < 65535) obsCnt[idx]++;
+    if (z < obsMinZ[idx]) obsMinZ[idx] = z;
+    if (z > obsMaxZ[idx]) obsMaxZ[idx] = z;
+  }
+
+  // Density-adaptive thresholds for dense static walls vs transient pedestrian trails
+  const denseThresh = n >= 250000 ? 20 : n >= 40000 ? 6 : 2;
+  const tallThresh = n >= 250000 ? 9 : n >= 40000 ? 3 : 2;
+  const maxBlobCells = n >= 40000 ? 18 : 6;
+  const maxBlobPts = n >= 250000 ? 750 : n >= 40000 ? 180 : 30;
+
+  const isStaticWall = new Uint8Array(cells);
+  for (let i = 0; i < cells; i++) {
+    if (obsCnt[i] === 0) continue;
+    const span = obsMaxZ[i] - obsMinZ[i];
+    if (obsCnt[i] >= denseThresh || (obsCnt[i] >= tallThresh && span >= 0.72)) {
+      isStaticWall[i] = 1;
+    }
+  }
+
+  // Connected-component pruning of small detached dynamic blobs inside corridors
+  const vis = new Uint8Array(cells);
+  const q = new Int32Array(cells);
+  const n8 = [-1, 1, -w, w, -w - 1, -w + 1, w - 1, w + 1];
+  let prunedBlobs = 0;
+
+  for (let i = 0; i < cells; i++) {
+    if (!isStaticWall[i] || vis[i]) continue;
+    let hd = 0;
+    let tl = 0;
+    q[tl++] = i;
+    vis[i] = 1;
+    let totPts = 0;
+    let touchesEdge = false;
+    while (hd < tl) {
+      const cur = q[hd++];
+      totPts += obsCnt[cur];
+      const cx = cur % w;
+      const cy = (cur - cx) / w;
+      if (cx === 0 || cx === w - 1 || cy === 0 || cy === h - 1) {
+        touchesEdge = true;
+        continue;
+      }
+      for (let d = 0; d < 8; d++) {
+        const ni = cur + n8[d];
+        if (isStaticWall[ni] && !vis[ni]) {
+          vis[ni] = 1;
+          q[tl++] = ni;
+        }
+      }
+    }
+    if (!touchesEdge && tl <= maxBlobCells && totPts < maxBlobPts) {
+      prunedBlobs++;
+      for (let k = 0; k < tl; k++) isStaticWall[q[k]] = 0;
+    }
+  }
+
+  // 1-cell dilation keeps true structural wall edges crisp & continuous
+  const keepObs = new Uint8Array(isStaticWall);
+  for (let y = 1; y < h - 1; y++) {
+    const row = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const idx = row + x;
+      if (isStaticWall[idx]) continue;
+      if (isStaticWall[idx - 1] || isStaticWall[idx + 1] || isStaticWall[idx - w] || isStaticWall[idx + w]) {
+        keepObs[idx] = 1;
+      }
+    }
+  }
+
+  // Stage B: Precompute physical-wall protection mask on aligned 2D occupancy map (ignores virtual walls!)
+  let freeCarveMask = null;
+  let g2w = 0, g2h = 0, g2res = 0.05, g2ox = 0, g2oy = 0;
+  if (aligned2dGrid && mapYaml && Array.isArray(mapYaml.origin)) {
+    g2w = aligned2dGrid.width;
+    g2h = aligned2dGrid.height;
+    g2res = Math.max(1e-4, Number(mapYaml.resolution) || aligned2dGrid.resolution || 0.05);
+    g2ox = Number(mapYaml.origin[0]) || 0;
+    g2oy = Number(mapYaml.origin[1]) || 0;
+    const pCls = aligned2dGrid.physicalCls || aligned2dGrid.cls;
+    if (pCls && pCls.length === g2w * g2h) {
+      // Dilate physical 2D walls by freeCarveMarginM so real wall points are strictly protected
+      const radPx = Math.max(1, Math.round(freeCarveMarginM / g2res));
+      const nearWall = new Uint8Array(g2w * g2h);
+      // Fast separable horizontal + vertical box dilation of physical walls
+      const horiz = new Uint8Array(g2w * g2h);
+      for (let y = 0; y < g2h; y++) {
+        const row = y * g2w;
+        let run = 0;
+        for (let x = 0; x < g2w; x++) {
+          if (pCls[row + x] === 2) run = radPx + 1;
+          else if (run > 0) run--;
+          if (run > 0) horiz[row + x] = 1;
+        }
+        run = 0;
+        for (let x = g2w - 1; x >= 0; x--) {
+          if (pCls[row + x] === 2) run = radPx + 1;
+          else if (run > 0) run--;
+          if (run > 0) horiz[row + x] = 1;
+        }
+      }
+      for (let x = 0; x < g2w; x++) {
+        let run = 0;
+        for (let y = 0; y < g2h; y++) {
+          const idx = y * g2w + x;
+          if (horiz[idx]) run = radPx + 1;
+          else if (run > 0) run--;
+          if (run > 0) nearWall[idx] = 1;
+        }
+        run = 0;
+        for (let y = g2h - 1; y >= 0; y--) {
+          const idx = y * g2w + x;
+          if (horiz[idx]) run = radPx + 1;
+          else if (run > 0) run--;
+          if (run > 0) nearWall[idx] = 1;
+        }
+      }
+      freeCarveMask = new Uint8Array(g2w * g2h);
+      for (let i = 0; i < g2w * g2h; i++) {
+        if (pCls[i] === 1 && !nearWall[i]) freeCarveMask[i] = 1;
+      }
+    }
+  }
+
+  // Pass 2: filter points cleanly into compact Float32Arrays
+  const keepFlags = new Uint8Array(n);
+  let kept = 0;
+  let dynamicRemoved = 0;
+  let carvedByFreeSpace = 0;
+
+  for (let i = 0; i < n; i++) {
+    const o = i * 3;
+    const x = pos[o];
+    const y = pos[o + 1];
+    const z = pos[o + 2];
+    const rh = z - zFloor;
+    let isDynamic = false;
+
+    if (rh >= obsMinH && rh <= obsMaxH) {
+      // Check Stage B (ray-carved 2D open corridor free space) first
+      if (freeCarveMask) {
+        const px = Math.floor((x - g2ox) / g2res);
+        const py = Math.floor(g2h - (y - g2oy) / g2res);
+        if (px >= 0 && px < g2w && py >= 0 && py < g2h && freeCarveMask[py * g2w + px]) {
+          isDynamic = true;
+          carvedByFreeSpace++;
+        }
+      }
+      // Check Stage A (3D geometric density + detached blob pruner)
+      if (!isDynamic) {
+        const gx = Math.floor((x - ox) * inv);
+        const gy = Math.floor((y - oy) * inv);
+        if (gx >= 0 && gx < w && gy >= 0 && gy < h && !keepObs[gy * w + gx]) {
+          isDynamic = true;
+        }
+      }
+    }
+
+    if (isDynamic) {
+      dynamicRemoved++;
+    } else {
+      keepFlags[i] = 1;
+      kept++;
+    }
+  }
+
+  const outPos = new Float32Array(kept * 3);
+  const outInt = new Float32Array(kept);
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    if (!keepFlags[i]) continue;
+    const srcO = i * 3;
+    const dstO = k * 3;
+    outPos[dstO] = pos[srcO];
+    outPos[dstO + 1] = pos[srcO + 1];
+    outPos[dstO + 2] = pos[srcO + 2];
+    outInt[k] = inten ? inten[i] : 0;
+    k++;
+  }
+
+  return {
+    positions: outPos,
+    intensities: outInt,
+    count: kept,
+    rawCount: n,
+    fields: parsed.fields,
+    hasIntensity: parsed.hasIntensity,
+    bounds: parsed.bounds,
+    dynamicRemoved,
+    prunedBlobs,
+    carvedByFreeSpace,
+  };
+}
+
 export function buildColoredPcdCloud(parsed, { colorMode = "height", zMin = -1.0, zMax = 2.6, label = RECORDED_PCD_LABEL } = {}) {
   const srcPos = parsed.positions;
   const srcInt = parsed.intensities;
@@ -204,7 +455,8 @@ export function buildColoredPcdCloud(parsed, { colorMode = "height", zMin = -1.0
     positions,
     colors,
     count: kept,
-    totalCount: n,
+    totalCount: parsed.rawCount || n,
+    dynamicRemoved: parsed.dynamicRemoved || 0,
     source: RECORDED_PCD_SOURCE,
     live: false,
     bounds: b,
