@@ -439,8 +439,13 @@ export function createMapCloudViewer({ canvas, hud, onHover = null, onPick = nul
         }
       }
       if (vecs.length >= 2) {
-        const curve = new THREE.CatmullRomCurve3(vecs);
-        const segs = Math.min(320, Math.max(24, vecs.length * 3));
+        // Piecewise linear CurvePath preserves taut straight segments with zero Catmull-Rom overshoot!
+        const curve = new THREE.CurvePath();
+        for (let i = 1; i < vecs.length; i++) {
+          curve.add(new THREE.LineCurve3(vecs[i - 1], vecs[i]));
+        }
+        const totalLen = curve.getLength();
+        const segs = Math.min(320, Math.max(24, Math.ceil(totalLen * 4)));
         const mainColor = activeNav ? 0x2dd4bf : 0x38bdf8;
         const glowColor = activeNav ? 0x14b8a6 : 0x0ea5e9;
 
@@ -465,7 +470,6 @@ export function createMapCloudViewer({ canvas, hud, onHover = null, onPick = nul
         pathGroup.add(haloTube);
 
         // Directional 3D flow cones along trajectory every ~2.4m
-        const totalLen = curve.getLength();
         const nCones = Math.min(28, Math.max(1, Math.floor(totalLen / 2.4)));
         const coneGeo = new THREE.ConeGeometry(0.18, 0.44, 10);
         const coneMat = new THREE.MeshBasicMaterial({ color: 0xe0f2fe });

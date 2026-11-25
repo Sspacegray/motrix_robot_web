@@ -422,9 +422,87 @@ function findNearestFreeCell(grid, gx0, gy0, minClearM) {
   return null;
 }
 
+function isCloudSegmentSafe(grid, x0, y0, x1, y1, minClearM, maxStepM) {
+  const dist = Math.hypot(x1 - x0, y1 - y0);
+  if (dist < 1e-4) return true;
+  const step = Math.max(0.05, grid.resolution * 0.45);
+  const nSteps = Math.max(2, Math.ceil(dist / step));
+  let prevZ = queryCloudCell(grid, x0, y0).z;
+  for (let s = 1; s <= nSteps; s++) {
+    const t = s / nSteps;
+    const x = x0 + (x1 - x0) * t;
+    const y = y0 + (y1 - y0) * t;
+    const info = queryCloudCell(grid, x, y);
+    if (info.state !== "free") return false;
+    if (info.clearanceM === null || info.clearanceM < minClearM) return false;
+    if (Math.abs(info.z - prevZ) > maxStepM) return false;
+    prevZ = info.z;
+  }
+  return true;
+}
+
+// Greedy farthest-visible Line-of-Sight string-pulling (Theta*-grade Euclidean shortest safe path)
+function stringPullCloudPath(grid, pts, minClearM, maxStepM) {
+  if (pts.length <= 2) return pts;
+  const pulled = [pts[0]];
+  let i = 0;
+  while (i < pts.length - 1) {
+    let best = i + 1;
+    for (let j = pts.length - 1; j > i + 1; j--) {
+      if (isCloudSegmentSafe(grid, pts[i][0], pts[i][1], pts[j][0], pts[j][1], minClearM, maxStepM)) {
+        best = j;
+        break;
+      }
+    }
+    pulled.push(pts[best]);
+    i = best;
+  }
+  return pulled;
+}
+
+// Subtle safe corner fillets at turns (keeps straight corridors 100% straight, rounds only real corners)
+function filletCloudCorners(grid, pts, minClearM, maxStepM) {
+  if (pts.length <= 2) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const c = pts[i + 1];
+    const lab = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const lbc = Math.hypot(c[0] - b[0], c[1] - b[1]);
+    const r = Math.min(0.45, lab * 0.30, lbc * 0.30);
+    if (r < 0.12) {
+      out.push(b);
+      continue;
+    }
+    const pIn = [b[0] - ((b[0] - a[0]) / lab) * r, b[1] - ((b[1] - a[1]) / lab) * r];
+    const pOut = [b[0] + ((c[0] - b[0]) / lbc) * r, b[1] + ((c[1] - b[1]) / lbc) * r];
+    const arc = [];
+    let ok = true;
+    for (const t of [0.25, 0.5, 0.75]) {
+      const mt = 1 - t;
+      const ax = mt * mt * pIn[0] + 2 * mt * t * b[0] + t * t * pOut[0];
+      const ay = mt * mt * pIn[1] + 2 * mt * t * b[1] + t * t * pOut[1];
+      const info = queryCloudCell(grid, ax, ay);
+      if (info.state !== "free" || info.clearanceM < minClearM) {
+        ok = false;
+        break;
+      }
+      arc.push([ax, ay]);
+    }
+    if (ok && isCloudSegmentSafe(grid, pIn[0], pIn[1], pOut[0], pOut[1], minClearM * 0.85, maxStepM)) {
+      out.push(pIn, ...arc, pOut);
+    } else {
+      out.push(b);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
 function planSingleCloudLeg(grid, startW, goalW, {
   robotRadiusM = 0.24,
-  safeClearM = 0.72,
+  safeClearM = 0.54,
   maxStepM = 0.22,
   maxExpanded = 65000,
 } = {}) {
@@ -505,7 +583,7 @@ function planSingleCloudLeg(grid, startW, goalW, {
       let penalty = 0;
       if (clear < safeClearM) {
         const ratio = (safeClearM - clear) / Math.max(0.05, safeClearM);
-        penalty = ratio * ratio * 3.8;
+        penalty = ratio * ratio * 1.35;
       }
       const nextG = curG + dirs[d][2] * (1.0 + penalty);
       if (nextG < gScore[ni]) {
@@ -532,39 +610,17 @@ function planSingleCloudLeg(grid, startW, goalW, {
   if (queryCloudCell(grid, startW[0], startW[1]).state === "free") rawPts[0] = [startW[0], startW[1]];
   if (queryCloudCell(grid, goalW[0], goalW[1]).state === "free") rawPts[rawPts.length - 1] = [goalW[0], goalW[1]];
 
-  // Decimate & collision-checked Chaikin smooth (never cuts corners into 3D walls!)
-  const decimated = [rawPts[0]];
-  const minStep = Math.max(0.24, resolution * 2.2);
+  // Compute safe clearance floor for Line-of-Sight string-pulling (never tighter than actual bottleneck)
+  let rawMinClr = 99.0;
   for (let i = 1; i < rawPts.length - 1; i++) {
-    const prev = decimated[decimated.length - 1];
-    if (Math.hypot(rawPts[i][0] - prev[0], rawPts[i][1] - prev[1]) >= minStep) {
-      decimated.push(rawPts[i]);
-    }
+    const c = queryCloudCell(grid, rawPts[i][0], rawPts[i][1]).clearanceM;
+    if (c !== null && c < rawMinClr) rawMinClr = c;
   }
-  decimated.push(rawPts[rawPts.length - 1]);
+  const pullMinClear = Math.max(robotRadiusM * 0.65, Math.min(0.36, rawMinClr));
 
-  let smooth = decimated;
-  const minSafe = robotRadiusM * 0.45;
-  for (let pass = 0; pass < 2 && smooth.length > 2; pass++) {
-    const next = [smooth[0]];
-    for (let i = 0; i < smooth.length - 1; i++) {
-      const [x0, y0] = smooth[i];
-      const [x1, y1] = smooth[i + 1];
-      const qx = 0.75 * x0 + 0.25 * x1;
-      const qy = 0.75 * y0 + 0.25 * y1;
-      const rx = 0.25 * x0 + 0.75 * x1;
-      const ry = 0.25 * y0 + 0.75 * y1;
-      const qInfo = queryCloudCell(grid, qx, qy);
-      const rInfo = queryCloudCell(grid, rx, ry);
-      if (qInfo.state === "free" && qInfo.clearanceM >= minSafe && rInfo.state === "free" && rInfo.clearanceM >= minSafe) {
-        next.push([qx, qy], [rx, ry]);
-      } else {
-        if (i > 0) next.push(smooth[i]);
-      }
-    }
-    next.push(smooth[smooth.length - 1]);
-    smooth = next;
-  }
+  // True Euclidean any-angle shortest safe path via Line-of-Sight string-pulling + subtle corner fillets
+  const taut = stringPullCloudPath(grid, rawPts, pullMinClear, maxStepM);
+  const smooth = filletCloudCorners(grid, taut, pullMinClear, maxStepM);
 
   let lengthM = 0;
   let minClearM = 99.0;

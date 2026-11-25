@@ -424,7 +424,7 @@ export function initNavigationTab(container) {
       cloudTravGrid,
       [latestRobotPose.x, latestRobotPose.y],
       cloudWaypoints,
-      { robotRadiusM: 0.24, safeClearM: 0.72 }
+      { robotRadiusM: 0.24, safeClearM: 0.52 }
     );
     updateRouteBanner();
     updateCloudPlanUi();
@@ -1395,7 +1395,7 @@ export function initNavigationTab(container) {
 
     const res = planGridPathAStar(styledMapCache.grid, rImg.px, rImg.py, gImg.px, gImg.py, {
       robotRadiusM: 0.24,
-      safeClearM: 0.72,
+      safeClearM: 0.52,
       maxExpanded: 70000,
     });
     if (res.ok) {

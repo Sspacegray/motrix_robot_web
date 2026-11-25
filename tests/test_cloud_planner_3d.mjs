@@ -103,3 +103,25 @@ test("cloud-planner-3d stays strictly read-only with zero API or network imports
   const src = await readFile(new URL("../frontend/js/cloud-planner-3d.js", import.meta.url), "utf8");
   assert.doesNotMatch(src, /import.*api\.js|fetch\(|XMLHttpRequest|WebSocket|\/api\//);
 });
+
+test("Line-of-Sight string-pulling produces taut Euclidean shortest safe path across open diagonal", () => {
+  // Open 10x8 room with no interior divider: diagonal from (1.5, 1.5) to (8.5, 4.5)
+  const pts = [];
+  for (let x = 0; x <= 10; x += 0.12) {
+    for (let y = 0; y <= 8; y += 0.12) {
+      pts.push(x, y, 0.05);
+      if (x <= 0.15 || x >= 9.85 || y <= 0.15 || y >= 7.85) {
+        pts.push(x, y, 0.6, x, y, 1.2);
+      }
+    }
+  }
+  const grid = buildCloudTraversabilityGrid(new Float32Array(pts), pts.length / 3, { resolution: 0.14 });
+  const route = planCloudWaypointsAStar(grid, [1.5, 1.5], [{ x: 8.5, y: 4.5 }]);
+  assert.equal(route.ok, true);
+  const trueEuclidean = Math.hypot(8.5 - 1.5, 4.5 - 1.5); // 7.6158m
+  assert.ok(
+    route.lengthM <= trueEuclidean * 1.015,
+    `expected taut Euclidean shortest path (~${trueEuclidean.toFixed(2)}m), got ${route.lengthM}m`
+  );
+  assert.equal(route.points3d.length, 2, "unobstructed diagonal should collapse cleanly to 2 endpoints");
+});

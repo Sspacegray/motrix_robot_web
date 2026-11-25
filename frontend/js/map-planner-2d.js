@@ -441,10 +441,80 @@ function findNearestNavigable(cls, distM, w, h, sx, sy, minClearM) {
   return null;
 }
 
-// Cost-aware A* pathfinder on a fast downsampled grid with Chaikin smoothing
+function is2dSegmentSafe(grid, x0, y0, x1, y1, minClearM) {
+  const distPx = Math.hypot(x1 - x0, y1 - y0);
+  if (distPx < 0.5) return true;
+  const steps = Math.max(2, Math.ceil(distPx * 1.25));
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    const info = queryCellInfo(grid, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+    if (info.state !== "free") return false;
+    if (info.clearanceM === null || info.clearanceM < minClearM) return false;
+  }
+  return true;
+}
+
+function stringPull2dPath(grid, pts, minClearM) {
+  if (pts.length <= 2) return pts;
+  const pulled = [pts[0]];
+  let i = 0;
+  while (i < pts.length - 1) {
+    let best = i + 1;
+    for (let j = pts.length - 1; j > i + 1; j--) {
+      if (is2dSegmentSafe(grid, pts[i][0], pts[i][1], pts[j][0], pts[j][1], minClearM)) {
+        best = j;
+        break;
+      }
+    }
+    pulled.push(pts[best]);
+    i = best;
+  }
+  return pulled;
+}
+
+function fillet2dCorners(grid, pts, minClearM) {
+  if (pts.length <= 2) return pts;
+  const rMaxPx = 0.45 / Math.max(1e-4, grid.resolution);
+  const rMinPx = 0.12 / Math.max(1e-4, grid.resolution);
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], b = pts[i], c = pts[i + 1];
+    const lab = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const lbc = Math.hypot(c[0] - b[0], c[1] - b[1]);
+    const r = Math.min(rMaxPx, lab * 0.30, lbc * 0.30);
+    if (r < rMinPx) {
+      out.push(b);
+      continue;
+    }
+    const pIn = [b[0] - ((b[0] - a[0]) / lab) * r, b[1] - ((b[1] - a[1]) / lab) * r];
+    const pOut = [b[0] + ((c[0] - b[0]) / lbc) * r, b[1] + ((c[1] - b[1]) / lbc) * r];
+    const arc = [];
+    let ok = true;
+    for (const t of [0.25, 0.5, 0.75]) {
+      const mt = 1 - t;
+      const ax = mt * mt * pIn[0] + 2 * mt * t * b[0] + t * t * pOut[0];
+      const ay = mt * mt * pIn[1] + 2 * mt * t * b[1] + t * t * pOut[1];
+      const info = queryCellInfo(grid, ax, ay);
+      if (info.state !== "free" || info.clearanceM < minClearM) {
+        ok = false;
+        break;
+      }
+      arc.push([ax, ay]);
+    }
+    if (ok && is2dSegmentSafe(grid, pIn[0], pIn[1], pOut[0], pOut[1], minClearM * 0.85)) {
+      out.push(pIn, ...arc, pOut);
+    } else {
+      out.push(b);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+// Cost-aware A* pathfinder + Line-of-Sight string-pulling (taut Euclidean shortest safe path!)
 export function planGridPathAStar(grid, startPx, startPy, goalPx, goalPy, {
   robotRadiusM = 0.24,
-  safeClearM = 0.72,
+  safeClearM = 0.54,
   maxExpanded = 36000,
 } = {}) {
   if (!grid) return { ok: false, reason: "no_grid", pointsPx: [], lengthM: 0, minClearanceM: 0 };
@@ -552,11 +622,11 @@ export function planGridPathAStar(grid, startPx, startPy, goalPx, goalPy, {
       const clear = gClear[ni];
       if (clear < robotRadiusM * 0.45) continue;
 
-      // Soft Nav2 inflation penalty steers routes cleanly down corridor centers!
+      // Mild Nav2 inflation penalty keeps clearance without distorting shortest routes
       let penalty = 0;
       if (clear < safeClearM) {
         const ratio = (safeClearM - clear) / Math.max(0.05, safeClearM);
-        penalty = ratio * ratio * 3.8;
+        penalty = ratio * ratio * 1.35;
       }
       const nextG = curG + dirs[d][2] * (1.0 + penalty);
       if (nextG < gScore[ni]) {
@@ -582,31 +652,17 @@ export function planGridPathAStar(grid, startPx, startPy, goalPx, goalPy, {
     cur = cameFrom[cur];
   }
   rawPts.reverse();
-  rawPts[0] = [startPx, startPy];
-  rawPts[rawPts.length - 1] = [goalPx, goalPy];
+  if (queryCellInfo(grid, startPx, startPy).state === "free") rawPts[0] = [startPx, startPy];
+  if (queryCellInfo(grid, goalPx, goalPy).state === "free") rawPts[rawPts.length - 1] = [goalPx, goalPy];
 
-  // Subsample + 2-pass Chaikin smoothing for silky Nav2-like curved paths
-  const decimated = [rawPts[0]];
+  let rawMinClr = 99.0;
   for (let i = 1; i < rawPts.length - 1; i++) {
-    const prev = decimated[decimated.length - 1];
-    if (Math.hypot(rawPts[i][0] - prev[0], rawPts[i][1] - prev[1]) >= Math.max(3.0, stride * 2.2)) {
-      decimated.push(rawPts[i]);
-    }
+    const c = queryCellInfo(grid, rawPts[i][0], rawPts[i][1]).clearanceM;
+    if (c !== null && c < rawMinClr) rawMinClr = c;
   }
-  decimated.push(rawPts[rawPts.length - 1]);
-
-  let smooth = decimated;
-  for (let pass = 0; pass < 2 && smooth.length > 2; pass++) {
-    const next = [smooth[0]];
-    for (let i = 0; i < smooth.length - 1; i++) {
-      const [x0, y0] = smooth[i];
-      const [x1, y1] = smooth[i + 1];
-      next.push([0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1]);
-      next.push([0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1]);
-    }
-    next.push(smooth[smooth.length - 1]);
-    smooth = next;
-  }
+  const pullMinClear = Math.max(robotRadiusM * 0.65, Math.min(0.36, rawMinClr));
+  const taut = stringPull2dPath(grid, rawPts, pullMinClear);
+  const smooth = fillet2dCorners(grid, taut, pullMinClear);
 
   let lengthM = 0;
   let minClearM = 99.0;
