@@ -5,6 +5,33 @@
 
 整合 **`r1pro_web`**（视觉感知 / 原子动作 / 工作流 / 导航 / 6D 末端）、**`dex_web`**（3D URDF / Motrix 只读仿真镜像 / 逐电机联锁诊断 / 安全心跳）、**`piper_lelab`**（动态切模 / 6 步安全向导 / 离线回放评测 / 打标）三套能力，严格遵守 [架构设计文档](docs/ARCHITECTURE.md) 与高层/底层分离红线，采用 **Motphys Loop** 设计变量与布局（非 1:1 框架移植）。
 
+## 效果预览 (Screenshots)
+
+### 1. 3D URDF 全息幽灵、6D IK 与多步分色工作流轨迹预演
+支持真实 UV 贴图 URDF 渲染、仅点亮运动支链的全息幽灵、防遮挡 X-Ray 多步分色霓虹轨迹、3D 步骤交接路标与可点击分步时间轴（免 Lease 预演）：
+
+![3D 多步分色工作流轨迹预演与 6D IK](docs/images/preview-3d-workflow-ik.png)
+
+### 2. 工作流闭环到位判定与单步断点调试（Pause / Step / Resume）
+实时轮询关节/导航/视觉闭环收敛状态与超时熔断，支持逐步骤单步断点调试（`⏭ 下一步` / `▶ 继续全部` / 暂停即时 `safe_stop`）与参数传递上下文追踪：
+
+![工作流闭环到位与单步断点调试抽屉](docs/images/preview-step-breakpoint-drawer.png)
+
+### 3. 真实 2D/3D LiDAR SLAM 地图导航与底盘微调
+内置高精 2D 栅格图与 3D 静态点云（支持高程/强度/语义着色与顶棚 Z 轴切片），联动 `MANUAL ⇄ NAVIGATION` 状态机与死人开关点动：
+
+![3D LiDAR SLAM 点云导航地图](docs/images/preview-3d-slam-navigation.png)
+
+### 4. 策略切模、Action Layout 契约预检与 HiDPI 离线回放曲线
+支持 VLA / `pi0.5` Checkpoint 切换、维度契约预检、Piper 6 步安全放行向导、Retina HiDPI 离线对比曲线与 Episode 打标：
+
+![策略切模与离线对比回放曲线](docs/images/preview-policy-eval.png)
+
+### 5. 数据驱动「+ 导入机器人」标准资产包向导与 ROS 2 WebSocket 接入
+支持上传标准 `.zip`（或纯 URDF 自动推导关节与运动学链），经 6 项入库预检后即刻启用 3D/IK；内置零 `rclpy` 依赖的 `rosbridge_server` WebSocket 协议桥接与一键连通探针：
+
+![导入机器人标准向导与 ROS 2 桥接配置](docs/images/preview-robot-import-ros2.png)
+
 ## 快速启动
 
 ```bash
