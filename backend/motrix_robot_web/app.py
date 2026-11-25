@@ -700,6 +700,24 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
             raise HTTPException(status_code=404, detail="Waypoint not found")
         return {"deleted": True, "id": waypoint_id}
 
+    @app.get("/api/navigation/map-edits")
+    def get_map_edits(map_id: str = "fast_slam_20260914") -> dict[str, Any]:
+        ov = ctx.store.get_map_edits(map_id)
+        return {"edits": ov.model_dump()}
+
+    @app.put("/api/navigation/map-edits/{map_id}")
+    def save_map_edits(map_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            ov = ctx.store.save_map_edits(map_id, body)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"无效地图编辑数据: {exc}") from exc
+        return {"edits": ov.model_dump()}
+
+    @app.delete("/api/navigation/map-edits/{map_id}")
+    def reset_map_edits(map_id: str) -> dict[str, Any]:
+        ov = ctx.store.reset_map_edits(map_id)
+        return {"reset": True, "edits": ov.model_dump()}
+
     @app.post("/api/robots/{robot_id}/navigation/mode")
     def set_nav_mode(robot_id: str, body: dict[str, Any]) -> dict[str, Any]:
         conn, gate = ctx.get_robot(robot_id)
@@ -710,7 +728,7 @@ def create_app(data_dir: Path | None = None, config_path: Path | None = None) ->
     def send_nav_goal(robot_id: str, req: NavGoalRequest) -> dict[str, Any]:
         conn, gate = ctx.get_robot(robot_id)
         gate.require_control_authority(conn.get_observation())
-        return conn.send_navigation_goal(req.x, req.y, req.yaw)
+        return conn.send_navigation_goal(req.x, req.y, req.yaw, path_points=req.path_points)
 
     @app.post("/api/robots/{robot_id}/navigation/cancel")
     def cancel_nav(robot_id: str) -> dict[str, Any]:

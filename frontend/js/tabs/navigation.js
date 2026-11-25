@@ -4,7 +4,13 @@ import { occupancyToPointCloud, lumaFromRgba, MOCK_CLOUD_LABEL } from "../map-cl
 import { parsePcdBuffer, buildColoredPcdCloud, RECORDED_PCD_LABEL } from "../pcd-loader.js";
 import { createMapCloudViewer } from "../map-cloud-viewer.js";
 import { bindMapInteractions } from "../map-interactions.js";
-import { analyzeOccupancyGrid, queryCellInfo, castLidarScan, planGridPathAStar } from "../map-planner-2d.js";
+import {
+  analyzeOccupancyGrid,
+  exportNav2OccupancyRgba,
+  queryCellInfo,
+  castLidarScan,
+  planGridPathAStar,
+} from "../map-planner-2d.js";
 import { escapeHtml } from "../ui-format.js";
 import { notify } from "../notify.js";
 
@@ -108,6 +114,18 @@ export function initNavigationTab(container) {
               <button type="button" class="nav-map-tool-btn" id="navMeasureBtn" aria-pressed="false" title="两点物理测距工具 (按 Esc 退出)">测距</button>
               <button type="button" class="nav-map-tool-btn" id="navMapGridBtn" aria-pressed="false" title="显示/隐藏世界坐标米制网格">网格</button>
               <button type="button" class="nav-map-tool-btn" id="navMapThemeBtn" aria-pressed="false" title="切换深色战术图 / 浅色室内图">亮底</button>
+              <span class="nav-tool-sep" aria-hidden="true"></span>
+              <button type="button" class="nav-map-tool-btn" id="navEditMapBtn" aria-pressed="false" title="打开栅格地图编辑（画虚拟墙 / 去除杂点 / 导出 Nav2 地图）">编辑地图</button>
+            </div>
+            <div id="navEditBar" class="nav-edit-bar" role="toolbar" aria-label="栅格地图编辑工具" hidden>
+              <button type="button" class="nav-map-tool-btn" id="navToolWallBtn" aria-pressed="false" title="左键拖拽绘制 Nav2 禁行虚拟墙，路径规划与代价层立即绕行">虚拟墙</button>
+              <button type="button" class="nav-map-tool-btn" id="navToolEraseBtn" aria-pressed="false" title="左键涂抹擦除地图中的漂浮杂点/临时障碍">擦除杂点</button>
+              <button type="button" class="nav-map-tool-btn" id="navSmartDenoiseBtn" aria-pressed="false" title="连通域一键清除地图中孤立漂浮 SLAM 杂点簇">一键去杂点</button>
+              <span class="nav-tool-sep" aria-hidden="true"></span>
+              <button type="button" class="nav-map-tool-btn" id="navUndoEditBtn" title="撤销最近一道虚拟墙或擦除笔画">撤销</button>
+              <button type="button" class="nav-map-tool-btn" id="navExportNav2Btn" title="导出融合去噪与虚拟墙的标准 ROS 2 / Nav2 占用栅格 PNG">导出 Nav2</button>
+              <button type="button" class="nav-map-tool-btn" id="navResetEditsBtn" title="清空当前地图所有虚拟墙与擦除编辑，恢复原始建图">还原</button>
+              <span id="navEditCountTag" class="nav-edit-count">原图</span>
             </div>
             <div id="navRouteBanner" class="nav-route-pill" hidden></div>
             <div id="navCloudHud" class="nav-cloud-hud" hidden></div>
@@ -253,8 +271,18 @@ export function initNavigationTab(container) {
   let measureMode = false;
   let measurePoints = []; // up to 2 points [{ wx, wy }]
   let measureHover = null; // { wx, wy }
+  let editPanelOpen = false;
+  let editTool = null; // null | "draw_wall" | "erase_noise"
+  let mapEdits = { denoiseLevel: 1, virtualWalls: [], eraseStrokes: [] };
+  let editHistory = []; // stack of "wall" | "erase"
+  let editRevision = 0;
+  let draftWall = null; // { x1, y1, x2, y2 } in world meters while dragging
+  let activeEraseStroke = null; // { id, points: [[wx, wy]], radius_m }
+  let hoverWorld = null; // { wx, wy } for eraser brush preview
+  let rawImgCache = { src: null, width: 0, height: 0, data: null };
   let previewRoute = null; // { ok, reason, pointsWorld, lengthM, minClearanceM, etaS }
   let lastRouteKey = null;
+  let latestPathSource = "";
   let lidarCache = { key: null, rays: [] };
   let animRafId = null;
   let animPhase = 0;
@@ -275,22 +303,52 @@ export function initNavigationTab(container) {
   function buildStyledMap(img) {
     if (!img || !img.complete || !img.naturalWidth || !img.naturalHeight) return null;
     const res = Number(mapYaml.resolution) || 0.05;
-    const key = `${activeMap?.id || ""}|${img.src}|${img.naturalWidth}x${img.naturalHeight}|${res}`;
+    const key = `${activeMap?.id || ""}|${img.src}|${img.naturalWidth}x${img.naturalHeight}|${res}|rev${editRevision}`;
     if (styledMapCache.key === key && styledMapCache.dark && styledMapCache.light && styledMapCache.grid) {
       return styledMapCache;
     }
     const w = img.naturalWidth;
     const h = img.naturalHeight;
-    const probe = document.createElement("canvas");
-    probe.width = w;
-    probe.height = h;
-    const pctx = probe.getContext("2d", { willReadFrequently: true });
-    pctx.drawImage(img, 0, 0);
-    const src = pctx.getImageData(0, 0, w, h).data;
+    let src;
+    if (rawImgCache.src === img.src && rawImgCache.width === w && rawImgCache.height === h && rawImgCache.data) {
+      src = rawImgCache.data;
+    } else {
+      const probe = document.createElement("canvas");
+      probe.width = w;
+      probe.height = h;
+      const pctx = probe.getContext("2d", { willReadFrequently: true });
+      pctx.drawImage(img, 0, 0);
+      src = pctx.getImageData(0, 0, w, h).data;
+      rawImgCache = { src: img.src, width: w, height: h, data: src };
+    }
 
-    // 1. Analyze ROS occupancy grid + exact 2-pass Chamfer Euclidean Distance Transform (meters to nearest wall)
-    const grid = analyzeOccupancyGrid(src, w, h, res);
-    const { cls, distM, bounds } = grid;
+    // Project non-destructive world-space edits (erase strokes & virtual walls) into image pixel space
+    const eraseStrokesPx = (mapEdits.eraseStrokes || []).map(st => ({
+      radiusPx: Math.max(1.2, (Number(st.radius_m) || 0.35) / res),
+      pointsPx: (st.points || []).map(([wx, wy]) => {
+        const pt = worldToImage(wx, wy);
+        return [pt.px, pt.py];
+      }),
+    }));
+    const virtualWallsPx = (mapEdits.virtualWalls || []).map(vw => {
+      const p1 = worldToImage(vw.x1, vw.y1);
+      const p2 = worldToImage(vw.x2, vw.y2);
+      return {
+        x1: p1.px,
+        y1: p1.py,
+        x2: p2.px,
+        y2: p2.py,
+        thicknessPx: Math.max(2.0, (Number(vw.thickness_m) || 0.16) / res),
+      };
+    });
+
+    // 1. Analyze ROS occupancy grid + denoising + manual eraser + virtual walls + exact 2-pass Chamfer EDT
+    const grid = analyzeOccupancyGrid(src, w, h, res, {
+      denoiseLevel: mapEdits.denoiseLevel,
+      eraseStrokes: eraseStrokesPx,
+      virtualWalls: virtualWallsPx,
+    });
+    const { cls, physicalCls, distM, bounds } = grid;
 
     // 2. Precompute 3 crisp layered offscreen textures per theme:
     //    - floor: EDT ambient-occlusion shaded architectural slab
@@ -382,9 +440,10 @@ export function initNavigationTab(container) {
             }
           }
 
-          // Layer C: 2.5D Extruded Architectural Walls (offset base extrusion + luminous crisp cap)
-          if (c === 2) {
-            const topEdge = y > 0 && cls[idx - w] !== 2;
+          // Layer C: 2.5D Extruded Physical SLAM Walls (virtual walls are drawn cleanly as Keepout vector overlay)
+          const pc = physicalCls[idx];
+          if (pc === 2) {
+            const topEdge = y > 0 && physicalCls[idx - w] !== 2;
             if (isLight) {
               wdst[p] = topEdge ? 51 : 24;
               wdst[p + 1] = topEdge ? 65 : 35;
@@ -397,13 +456,12 @@ export function initNavigationTab(container) {
               wdst[p + 3] = 252;
             }
           } else {
-            // Subtle 2.5D drop-extrusion right below/right of wall pixels + crisp anti-aliased wall bevel
-            const wallAbove = (y > 0 && cls[idx - w] === 2) || (y > 1 && x > 0 && cls[idx - w - 1] === 2);
+            const wallAbove = (y > 0 && physicalCls[idx - w] === 2) || (y > 1 && x > 0 && physicalCls[idx - w - 1] === 2);
             const wallAdj =
-              (x > 0 && cls[idx - 1] === 2) ||
-              (x + 1 < w && cls[idx + 1] === 2) ||
-              (y > 0 && cls[idx - w] === 2) ||
-              (y + 1 < h && cls[idx + w] === 2);
+              (x > 0 && physicalCls[idx - 1] === 2) ||
+              (x + 1 < w && physicalCls[idx + 1] === 2) ||
+              (y > 0 && physicalCls[idx - w] === 2) ||
+              (y + 1 < h && physicalCls[idx + w] === 2);
             if (wallAbove) {
               wdst[p] = isLight ? 15 : 2;
               wdst[p + 1] = isLight ? 23 : 6;
@@ -572,9 +630,141 @@ export function initNavigationTab(container) {
     const controlsStrip = container.querySelector("#navCloudControls");
     if (controlsStrip) controlsStrip.hidden = !(mapView === "cloud3d" && isRealPcd);
     load2DImage(mapEntry.image_url);
+    loadMapEdits(mapEntry.id);
     updateMapNotes();
     loadWaypoints();
     if (mapView === "cloud3d") ensureActiveCloud(false);
+  }
+
+  function updateEditBarUi() {
+    const editBtn = container.querySelector("#navEditMapBtn");
+    const editBar = container.querySelector("#navEditBar");
+    const wallBtn = container.querySelector("#navToolWallBtn");
+    const eraseBtn = container.querySelector("#navToolEraseBtn");
+    const denoiseBtn = container.querySelector("#navSmartDenoiseBtn");
+    const undoBtn = container.querySelector("#navUndoEditBtn");
+    const countTag = container.querySelector("#navEditCountTag");
+
+    if (editBtn) {
+      editBtn.setAttribute("aria-pressed", editPanelOpen ? "true" : "false");
+      editBtn.classList.toggle("active-edit", editPanelOpen);
+    }
+    if (editBar) {
+      editBar.hidden = mapView !== "occupancy2d" || !editPanelOpen;
+    }
+    if (wallBtn) {
+      const on = editTool === "draw_wall";
+      wallBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      wallBtn.classList.toggle("active-edit", on);
+    }
+    if (eraseBtn) {
+      const on = editTool === "erase_noise";
+      eraseBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      eraseBtn.classList.toggle("active-erase", on);
+    }
+    if (denoiseBtn) {
+      const strong = mapEdits.denoiseLevel >= 2;
+      denoiseBtn.setAttribute("aria-pressed", strong ? "true" : "false");
+      denoiseBtn.classList.toggle("active", strong);
+      denoiseBtn.textContent = strong ? "智能去噪 ✓" : "一键去杂点";
+    }
+    if (undoBtn) {
+      const canUndo = (mapEdits.virtualWalls?.length || 0) + (mapEdits.eraseStrokes?.length || 0) > 0;
+      undoBtn.disabled = !canUndo;
+      undoBtn.style.opacity = canUndo ? "1" : "0.42";
+    }
+    if (countTag) {
+      const wCnt = mapEdits.virtualWalls?.length || 0;
+      const eCnt = mapEdits.eraseStrokes?.length || 0;
+      const parts = [];
+      if (wCnt) parts.push(`墙 ${wCnt}`);
+      if (eCnt) parts.push(`擦 ${eCnt}`);
+      if (mapEdits.denoiseLevel >= 2) parts.push("强去噪");
+      countTag.textContent = parts.length ? parts.join(" · ") : "原图";
+    }
+    if (canvas) {
+      if (editTool === "erase_noise") canvas.style.cursor = "none";
+      else if (editTool === "draw_wall") canvas.style.cursor = "crosshair";
+      else if (measureMode) canvas.style.cursor = "cell";
+      else canvas.style.cursor = "crosshair";
+    }
+  }
+
+  function rebuildMapFromEdits({ toastStats = false } = {}) {
+    editRevision++;
+    updateEditBarUi();
+    if (mapImage && mapImage.complete && mapImage.naturalWidth) {
+      const styled = buildStyledMap(mapImage);
+      recomputePreviewRoute(true);
+      drawMap();
+      if (toastStats && styled?.grid?.stats) {
+        const st = styled.grid.stats;
+        if (mapEdits.denoiseLevel >= 2) {
+          notify(`一键智能去噪完成：已清除 ${st.removedClusters} 处孤立漂浮杂点（共 ${st.removedPixels} 像素），代价层与 A* 已重算`, "success");
+        } else {
+          notify("已恢复默认轻度去噪模式", "info");
+        }
+      }
+    }
+  }
+
+  async function persistMapEdits() {
+    if (!activeMap?.id) return;
+    try {
+      await api.saveMapEdits(activeMap.id, {
+        denoise_level: mapEdits.denoiseLevel,
+        virtual_walls: mapEdits.virtualWalls,
+        erase_strokes: mapEdits.eraseStrokes,
+      });
+    } catch (err) {
+      console.warn("Persist map edits failed:", err);
+    }
+  }
+
+  async function loadMapEdits(mapId) {
+    mapEdits = { denoiseLevel: 1, virtualWalls: [], eraseStrokes: [] };
+    editHistory = [];
+    draftWall = null;
+    activeEraseStroke = null;
+    updateEditBarUi();
+    if (!mapId) return;
+    try {
+      const res = await api.getMapEdits(mapId);
+      const ov = res?.edits;
+      if (ov && ov.map_id === activeMap?.id) {
+        mapEdits = {
+          denoiseLevel: Number.isInteger(ov.denoise_level) ? ov.denoise_level : 1,
+          virtualWalls: Array.isArray(ov.virtual_walls) ? ov.virtual_walls : [],
+          eraseStrokes: Array.isArray(ov.erase_strokes) ? ov.erase_strokes : [],
+        };
+        editHistory = [
+          ...mapEdits.eraseStrokes.map(() => "erase"),
+          ...mapEdits.virtualWalls.map(() => "wall"),
+        ];
+        rebuildMapFromEdits();
+      }
+    } catch (err) {
+      console.warn("Load map edits failed:", err);
+    }
+  }
+
+  function exportNav2Png() {
+    if (!styledMapCache.grid) {
+      notify("地图尚未加载完成，无法导出", "error");
+      return;
+    }
+    const { width, height } = styledMapCache.grid;
+    const rgba = exportNav2OccupancyRgba(styledMapCache.grid);
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = width;
+    outCanvas.height = height;
+    const octx = outCanvas.getContext("2d");
+    octx.putImageData(new ImageData(rgba, width, height), 0, 0);
+    const link = document.createElement("a");
+    link.download = `${activeMap?.id || "map"}_nav2_edited.png`;
+    link.href = outCanvas.toDataURL("image/png");
+    link.click();
+    notify(`已导出 ROS 2 / Nav2 标准占用栅格 PNG（含 ${mapEdits.virtualWalls.length} 道虚拟墙与去噪结果）`, "success");
   }
 
   function updateMapNotes() {
@@ -589,7 +779,7 @@ export function initNavigationTab(container) {
       ? (isRealPcd
           ? "<div>色谱：真实 LiDAR 高程/强度/语义 · 支持顶棚 Z 切片</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>"
           : "<div>灰色：稀疏自由地面 · 绿色：占用格拉伸</div><div>青色：当前位姿 · 橙色：已有目标（只读）</div>")
-      : "<div><span style=\"color:#2dd4bf;\">●</span> 位姿/激光雷达 · <span style=\"color:#f43f5e;\">■</span><span style=\"color:#818cf8;\">■</span> Nav2 膨胀代价层</div><div><span style=\"color:#38bdf8;\">➤</span> A* 避障路径 · <span style=\"color:#f59e0b;\">◎</span> 目标 · <span style=\"color:#c084fc;\">●</span> 航点</div>";
+      : "<div><span style=\"color:#2dd4bf;\">●</span> 位姿/激光雷达 · <span style=\"color:#f43f5e;\">■</span><span style=\"color:#818cf8;\">■</span> Nav2 膨胀代价层 · <span style=\"color:#fb7185;\">▬</span> 虚拟墙</div><div><span style=\"color:#38bdf8;\">➤</span> A* 避障路径 · <span style=\"color:#f59e0b;\">◎</span> 目标 · <span style=\"color:#c084fc;\">●</span> 航点</div>";
   }
 
   function setMapView(next) {
@@ -606,6 +796,8 @@ export function initNavigationTab(container) {
     container.querySelector("#navCoordsOverlay").hidden = threeD;
     const tb2d = container.querySelector("#nav2dToolbar");
     if (tb2d) tb2d.hidden = threeD;
+    const editBar = container.querySelector("#navEditBar");
+    if (editBar) editBar.hidden = threeD || !editPanelOpen;
     const bannerEl = container.querySelector("#navRouteBanner");
     if (bannerEl) bannerEl.hidden = threeD || !goalPose || !previewRoute;
     container.querySelector("#navCloudControls").hidden = !(threeD && isRealPcd);
@@ -705,7 +897,11 @@ export function initNavigationTab(container) {
   const measureBtn = container.querySelector("#navMeasureBtn");
   function setMeasureMode(next) {
     measureMode = !!next;
-    if (!measureMode) {
+    if (measureMode) {
+      editTool = null;
+      draftWall = null;
+      activeEraseStroke = null;
+    } else {
       measurePoints = [];
       measureHover = null;
     }
@@ -713,10 +909,83 @@ export function initNavigationTab(container) {
       measureBtn.setAttribute("aria-pressed", measureMode ? "true" : "false");
       measureBtn.classList.toggle("active-measure", measureMode);
     }
-    if (canvas) canvas.style.cursor = measureMode ? "cell" : "crosshair";
+    updateEditBarUi();
     drawMap();
   }
   measureBtn?.addEventListener("click", () => setMeasureMode(!measureMode));
+
+  function setEditTool(nextTool) {
+    editTool = editTool === nextTool ? null : nextTool;
+    draftWall = null;
+    activeEraseStroke = null;
+    if (editTool) {
+      measureMode = false;
+      measurePoints = [];
+      measureHover = null;
+      if (measureBtn) {
+        measureBtn.setAttribute("aria-pressed", "false");
+        measureBtn.classList.remove("active-measure");
+      }
+    }
+    updateEditBarUi();
+    drawMap();
+  }
+
+  container.querySelector("#navEditMapBtn")?.addEventListener("click", () => {
+    editPanelOpen = !editPanelOpen;
+    if (editPanelOpen && !editTool) {
+      setEditTool("draw_wall");
+    } else if (!editPanelOpen) {
+      editTool = null;
+      draftWall = null;
+      activeEraseStroke = null;
+      updateEditBarUi();
+      drawMap();
+    } else {
+      updateEditBarUi();
+    }
+  });
+  container.querySelector("#navToolWallBtn")?.addEventListener("click", () => setEditTool("draw_wall"));
+  container.querySelector("#navToolEraseBtn")?.addEventListener("click", () => setEditTool("erase_noise"));
+  container.querySelector("#navSmartDenoiseBtn")?.addEventListener("click", () => {
+    mapEdits.denoiseLevel = mapEdits.denoiseLevel >= 2 ? 1 : 2;
+    rebuildMapFromEdits({ toastStats: true });
+    persistMapEdits();
+  });
+  container.querySelector("#navUndoEditBtn")?.addEventListener("click", () => {
+    const lastKind = editHistory.pop();
+    if (lastKind === "wall" && mapEdits.virtualWalls.length) {
+      mapEdits.virtualWalls.pop();
+      notify("已撤销最近一道虚拟墙", "info");
+    } else if (lastKind === "erase" && mapEdits.eraseStrokes.length) {
+      mapEdits.eraseStrokes.pop();
+      notify("已撤销最近一次擦除杂点", "info");
+    } else if (mapEdits.virtualWalls.length) {
+      mapEdits.virtualWalls.pop();
+    } else if (mapEdits.eraseStrokes.length) {
+      mapEdits.eraseStrokes.pop();
+    } else {
+      return;
+    }
+    rebuildMapFromEdits();
+    persistMapEdits();
+  });
+  container.querySelector("#navExportNav2Btn")?.addEventListener("click", () => exportNav2Png());
+  container.querySelector("#navResetEditsBtn")?.addEventListener("click", async () => {
+    mapEdits = { denoiseLevel: 1, virtualWalls: [], eraseStrokes: [] };
+    editHistory = [];
+    draftWall = null;
+    activeEraseStroke = null;
+    rebuildMapFromEdits();
+    if (activeMap?.id) {
+      try {
+        await api.resetMapEdits(activeMap.id);
+      } catch (err) {
+        console.warn("Reset map edits failed:", err);
+      }
+    }
+    notify("已清空全部虚拟墙与擦除记录，恢复原始建图", "info");
+  });
 
   const gridBtn = container.querySelector("#navMapGridBtn");
   gridBtn?.addEventListener("click", () => {
@@ -795,15 +1064,21 @@ export function initNavigationTab(container) {
     banner.hidden = false;
     if (previewRoute.ok) {
       banner.classList.remove("is-blocked");
-      const modeLabel = plannedPath && plannedPath.length > 1 ? "导航执行路径" : "A* 避障路径预览";
+      const hasBackend = plannedPath && plannedPath.length > 1;
+      const modeLabel = hasBackend
+        ? (latestPathSource === "nav2_plan" ? "Nav2 /plan 实时路径" : "A* 避障执行路径")
+        : "前端 A* 避障预览";
+      const vwNote = mapEdits.virtualWalls.length > 0 ? `<span class="nrp-sep"> · </span><span>含 ${mapEdits.virtualWalls.length} 道虚拟墙</span>` : "";
       const clrVal = Number(previewRoute.minClearanceM || 0);
       const clrCls = clrVal < 0.34 ? "nrp-clr-tight" : clrVal >= 0.5 ? "nrp-clr-safe" : "";
-      banner.innerHTML = `<span class="nrp-dot"></span><span>${modeLabel} </span><strong>${previewRoute.lengthM.toFixed(1)} m</strong><span class="nrp-sep"> · </span><span>预计 ${Math.max(1, Math.round(previewRoute.etaS))} s</span><span class="nrp-sep"> · </span><span>最小壁距 <strong class="${clrCls}">${clrVal.toFixed(2)} m</strong></span>`;
+      banner.innerHTML = `<span class="nrp-dot"></span><span>${modeLabel} </span><strong>${previewRoute.lengthM.toFixed(1)} m</strong><span class="nrp-sep"> · </span><span>预计 ${Math.max(1, Math.round(previewRoute.etaS))} s</span><span class="nrp-sep"> · </span><span>最小壁距 <strong class="${clrCls}">${clrVal.toFixed(2)} m</strong></span>${vwNote}`;
     } else {
       banner.classList.add("is-blocked");
       const msg = previewRoute.reason === "goal_in_obstacle"
-        ? "目标位于墙体障碍物内 · 请拖拽至蓝色安全通行区"
-        : "目标暂不可达（通道被阻断或超出已建图区域）";
+        ? "目标位于墙体/虚拟墙内 · 请拖拽至蓝色安全通行区"
+        : (mapEdits.virtualWalls.length > 0
+            ? "通道已被虚拟墙/障碍物阻断 · 当前目标不可达"
+            : "目标暂不可达（通道被阻断或超出已建图区域）");
       banner.innerHTML = `<span class="nrp-dot"></span><span>${msg}</span>`;
     }
   }
@@ -1201,6 +1476,108 @@ export function initNavigationTab(container) {
     ctx.arc(origC.cx, origC.cy, 2.2, 0, Math.PI * 2);
     ctx.fill();
 
+    // 6b. Virtual Walls (Nav2 Keepout Hazard Laser Barriers — saved + live draft)
+    const drawVirtualWall = (vw, isDraft = false) => {
+      const p1 = worldToCanvas(vw.x1, vw.y1);
+      const p2 = worldToCanvas(vw.x2, vw.y2);
+      const lenM = Math.hypot(vw.x2 - vw.x1, vw.y2 - vw.y1);
+      const pxThick = Math.max(3.4, (Number(vw.thickness_m) || 0.16) * pxPerMeter);
+
+      ctx.save();
+      ctx.lineCap = "round";
+      // Crimson outer neon halo
+      ctx.strokeStyle = isDraft ? "rgba(251, 191, 36, 0.36)" : "rgba(244, 63, 94, 0.36)";
+      ctx.lineWidth = pxThick + 6;
+      ctx.beginPath();
+      ctx.moveTo(p1.cx, p1.cy);
+      ctx.lineTo(p2.cx, p2.cy);
+      ctx.stroke();
+
+      // Solid Keepout barrier core
+      ctx.strokeStyle = isLight ? "#e11d48" : "#fb7185";
+      ctx.lineWidth = Math.max(2.8, pxThick * 0.8);
+      if (isDraft) ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      ctx.moveTo(p1.cx, p1.cy);
+      ctx.lineTo(p2.cx, p2.cy);
+      ctx.stroke();
+
+      // Amber diagonal hazard stripe overlay
+      ctx.strokeStyle = "#fbbf24";
+      ctx.lineWidth = Math.max(1.4, pxThick * 0.34);
+      ctx.setLineDash([5, 7]);
+      ctx.beginPath();
+      ctx.moveTo(p1.cx, p1.cy);
+      ctx.lineTo(p2.cx, p2.cy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Endpoint anchor caps
+      for (const pt of [p1, p2]) {
+        ctx.fillStyle = "#f43f5e";
+        ctx.beginPath();
+        ctx.arc(pt.cx, pt.cy, 3.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+      }
+
+      // Compact label pill when editing or dragging
+      if ((isDraft || editPanelOpen) && lenM >= 0.25) {
+        const mx = (p1.cx + p2.cx) * 0.5;
+        const my = (p1.cy + p2.cy) * 0.5 - 12;
+        const tag = `${isDraft ? "新建虚拟墙" : "虚拟墙"} ${lenM.toFixed(2)}m`;
+        ctx.font = "600 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+        const tw = ctx.measureText(tag).width + 12;
+        drawRoundedRect(ctx, mx - tw / 2, my - 9, tw, 18, 5);
+        ctx.fillStyle = isLight ? "rgba(255, 241, 242, 0.96)" : "rgba(45, 10, 22, 0.90)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(244, 63, 94, 0.68)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = isLight ? "#9f1239" : "#fecdd3";
+        ctx.textAlign = "center";
+        ctx.fillText(tag, mx, my + 3.5);
+      }
+      ctx.restore();
+    };
+    for (const vw of mapEdits.virtualWalls) drawVirtualWall(vw, false);
+    if (draftWall) drawVirtualWall(draftWall, true);
+
+    // 6c. Live Noise-Eraser Brush Trail & Physical Radius Reticle
+    if (activeEraseStroke && activeEraseStroke.points.length > 0) {
+      const brushPx = Math.max(6, (activeEraseStroke.radius_m || 0.35) * pxPerMeter);
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(52, 211, 153, 0.28)";
+      ctx.lineWidth = brushPx * 2;
+      ctx.beginPath();
+      for (let i = 0; i < activeEraseStroke.points.length; i++) {
+        const pt = worldToCanvas(activeEraseStroke.points[i][0], activeEraseStroke.points[i][1]);
+        if (i === 0) ctx.moveTo(pt.cx, pt.cy);
+        else ctx.lineTo(pt.cx, pt.cy);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (editTool === "erase_noise" && hoverWorld) {
+      const hC = worldToCanvas(hoverWorld.wx, hoverWorld.wy);
+      const brushR = Math.max(6, 0.35 * pxPerMeter);
+      ctx.save();
+      ctx.fillStyle = "rgba(52, 211, 153, 0.16)";
+      ctx.strokeStyle = "#34d399";
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(hC.cx, hC.cy, brushR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
     // 7. Real Cost-Aware A* Preview Route (or Active Backend Planned Path)
     const hasBackendPath = plannedPath && plannedPath.length > 1;
     if (hasBackendPath) {
@@ -1533,6 +1910,21 @@ export function initNavigationTab(container) {
         drawMap();
         return;
       }
+      if (editTool === "draw_wall") {
+        draftWall = { x1: wx, y1: wy, x2: wx, y2: wy, thickness_m: 0.16 };
+        drawMap();
+        return;
+      }
+      if (editTool === "erase_noise") {
+        activeEraseStroke = {
+          id: `er-${Date.now().toString(36)}`,
+          points: [[Math.round(wx * 100) / 100, Math.round(wy * 100) / 100]],
+          radius_m: 0.35,
+        };
+        hoverWorld = { wx, wy };
+        drawMap();
+        return;
+      }
       isDraggingGoal = true;
       dragStartPos = { wx, wy };
       goalPose = { x: Math.round(wx * 100) / 100, y: Math.round(wy * 100) / 100, yaw: 0 };
@@ -1566,6 +1958,23 @@ export function initNavigationTab(container) {
         measureHover = { wx, wy };
         drawMap();
       }
+      if (editTool === "erase_noise") {
+        hoverWorld = { wx, wy };
+        if (activeEraseStroke) {
+          const prev = activeEraseStroke.points[activeEraseStroke.points.length - 1];
+          if (!prev || Math.hypot(wx - prev[0], wy - prev[1]) >= 0.08) {
+            activeEraseStroke.points.push([Math.round(wx * 100) / 100, Math.round(wy * 100) / 100]);
+          }
+        }
+        drawMap();
+      } else {
+        hoverWorld = null;
+      }
+      if (editTool === "draw_wall" && draftWall) {
+        draftWall.x2 = wx;
+        draftWall.y2 = wy;
+        drawMap();
+      }
     }
     if (isPanning) {
       offsetX = cx - panStartX;
@@ -1588,6 +1997,37 @@ export function initNavigationTab(container) {
   }
 
   function onMapMouseUp() {
+    if (draftWall) {
+      const lenM = Math.hypot(draftWall.x2 - draftWall.x1, draftWall.y2 - draftWall.y1);
+      if (lenM >= 0.25) {
+        mapEdits.virtualWalls.push({
+          id: `vw-${Date.now().toString(36)}`,
+          x1: Math.round(draftWall.x1 * 100) / 100,
+          y1: Math.round(draftWall.y1 * 100) / 100,
+          x2: Math.round(draftWall.x2 * 100) / 100,
+          y2: Math.round(draftWall.y2 * 100) / 100,
+          thickness_m: 0.16,
+          label: `虚拟墙 #${mapEdits.virtualWalls.length + 1}`,
+        });
+        editHistory.push("wall");
+        draftWall = null;
+        rebuildMapFromEdits();
+        persistMapEdits();
+        notify(`已添加 ${lenM.toFixed(2)}m 虚拟墙，代价层与 A* 路径已实时重规划`, "success");
+      } else {
+        draftWall = null;
+        drawMap();
+      }
+    }
+    if (activeEraseStroke) {
+      mapEdits.eraseStrokes.push(activeEraseStroke);
+      editHistory.push("erase");
+      activeEraseStroke = null;
+      rebuildMapFromEdits();
+      persistMapEdits();
+      const erased = styledMapCache.grid?.stats?.erasedPixels || 0;
+      notify(erased > 0 ? `已擦除局部障碍杂点（累计清除 ${erased} 像素），代价层已刷新` : "擦除完成（该区域无障碍像素）", "info");
+    }
     const wasDragging = isDraggingGoal;
     isPanning = false;
     isDraggingGoal = false;
@@ -1707,10 +2147,19 @@ export function initNavigationTab(container) {
     const y = parseFloat(container.querySelector("#navGoalInputY").value) || 0;
     const yawDeg = parseFloat(container.querySelector("#navGoalInputYaw").value) || 0;
     const yawRad = (yawDeg * Math.PI) / 180;
+    goalPose = { x, y, yaw: yawRad };
+    recomputePreviewRoute(true);
+    if (styledMapCache.grid && previewRoute && !previewRoute.ok) {
+      drawMap();
+      notify("目标位于墙体/虚拟墙内或通道被虚拟墙阻断，已拒绝下发", "error");
+      return;
+    }
+    const astarPath = previewRoute?.ok && previewRoute.pointsWorld.length >= 2 ? previewRoute.pointsWorld : null;
     try {
-      const res = await api.sendNavGoal(x, y, yawRad);
+      const res = await api.sendNavGoal(x, y, yawRad, astarPath);
       goalPose = { x, y, yaw: yawRad };
       if (res.path_points) plannedPath = res.path_points;
+      if (res.path_source) latestPathSource = res.path_source;
       recomputePreviewRoute(true);
       drawMap();
       const overlayPath = plannedPath.length > 1 ? plannedPath : (previewRoute?.ok ? previewRoute.pointsWorld : []);
@@ -1837,9 +2286,15 @@ export function initNavigationTab(container) {
 
   const onKeyDown = (e) => {
     if (!container.classList.contains("active") || !mapSupported) return;
-    if (e.key === "Escape" && measureMode) {
-      setMeasureMode(false);
-      return;
+    if (e.key === "Escape") {
+      if (measureMode) {
+        setMeasureMode(false);
+        return;
+      }
+      if (editTool) {
+        setEditTool(null);
+        return;
+      }
     }
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
     const key = e.key.toLowerCase();
@@ -1948,6 +2403,7 @@ export function initNavigationTab(container) {
       if (Array.isArray(nav.path_points)) {
         plannedPath = nav.path_points;
       }
+      latestPathSource = nav.path_source || "";
       if (nav.goal_map && !isDraggingGoal) {
         goalPose = {
           x: Number(nav.goal_map.x) || 0,

@@ -4,7 +4,48 @@
 // - Cost-aware A* collision-free path preview on real occupancy grid + Chaikin path smoothing
 // - Real-time 2D DDA LiDAR raycasting against occupied cells
 
-export function analyzeOccupancyGrid(rgba, width, height, resolution) {
+function distPointToSegSq(px, py, x1, y1, x2, y2) {
+  const vx = x2 - x1;
+  const vy = y2 - y1;
+  const lenSq = vx * vx + vy * vy;
+  if (lenSq <= 1e-9) {
+    const dx = px - x1;
+    const dy = py - y1;
+    return dx * dx + dy * dy;
+  }
+  let t = ((px - x1) * vx + (py - y1) * vy) / lenSq;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+  const cx = x1 + t * vx;
+  const cy = y1 + t * vy;
+  const dx = px - cx;
+  const dy = py - cy;
+  return dx * dx + dy * dy;
+}
+
+function rasterizeSegmentCapsule(width, height, x1, y1, x2, y2, radiusPx, visit) {
+  const r = Math.max(0.6, radiusPx);
+  const rSq = r * r;
+  const minX = Math.max(0, Math.floor(Math.min(x1, x2) - r - 1));
+  const maxX = Math.min(width - 1, Math.ceil(Math.max(x1, x2) + r + 1));
+  const minY = Math.max(0, Math.floor(Math.min(y1, y2) - r - 1));
+  const maxY = Math.min(height - 1, Math.ceil(Math.max(y1, y2) + r + 1));
+  for (let y = minY; y <= maxY; y++) {
+    const row = y * width;
+    for (let x = minX; x <= maxX; x++) {
+      if (distPointToSegSq(x, y, x1, y1, x2, y2) <= rSq) {
+        visit(row + x);
+      }
+    }
+  }
+}
+
+export function analyzeOccupancyGrid(rgba, width, height, resolution, options = {}) {
+  const {
+    denoiseLevel = 1,
+    eraseStrokes = [],
+    virtualWalls = [],
+  } = options || {};
   const n = width * height;
   const raw = new Uint8Array(n); // 0=unknown, 1=free, 2=occupied
   for (let i = 0; i < n; i++) {
@@ -15,30 +56,166 @@ export function analyzeOccupancyGrid(rgba, width, height, resolution) {
     else raw[i] = 0;
   }
 
-  // Light 3x3 morphological speckle denoising (preserves every real wall & doorway)
   const cls = new Uint8Array(raw);
-  for (let y = 1; y < height - 1; y++) {
-    const row = y * width;
-    for (let x = 1; x < width - 1; x++) {
-      const idx = row + x;
-      const c = raw[idx];
-      let freeN = 0;
-      let wallN = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        const nr = (y + dy) * width;
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const nc = raw[nr + x + dx];
-          if (nc === 1) freeN++;
-          else if (nc === 2) wallN++;
+  let removedClusters = 0;
+  let removedPixels = 0;
+  let erasedPixels = 0;
+  let virtualWallPixels = 0;
+
+  // Stage 1: Light 3x3 morphological speckle denoising (denoiseLevel >= 1)
+  if (denoiseLevel >= 1) {
+    for (let y = 1; y < height - 1; y++) {
+      const row = y * width;
+      for (let x = 1; x < width - 1; x++) {
+        const idx = row + x;
+        const c = raw[idx];
+        let freeN = 0;
+        let wallN = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const nr = (y + dy) * width;
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nc = raw[nr + x + dx];
+            if (nc === 1) freeN++;
+            else if (nc === 2) wallN++;
+          }
+        }
+        if (c === 0 && freeN >= 5 && wallN === 0) {
+          cls[idx] = 1;
+        } else if (c === 2 && wallN === 0 && freeN >= 6) {
+          cls[idx] = 1;
+          removedPixels++;
         }
       }
-      if (c === 0 && freeN >= 5 && wallN === 0) {
-        cls[idx] = 1;
-      } else if (c === 2 && wallN === 0 && freeN >= 6) {
-        cls[idx] = 1;
+    }
+  }
+
+  // Stage 2: Strong Connected-Component Floating Noise Pruning (denoiseLevel >= 2)
+  // Removes isolated floating SLAM ghost clusters (people/chair legs/dust <= 18px surrounded by free space)
+  // while preserving 100% of structural walls and doorways.
+  if (denoiseLevel >= 2) {
+    const visited = new Uint8Array(n);
+    const queue = new Int32Array(n);
+    const maxIslandPx = 18;
+    const n8 = [-1, 1, -width, width, -width - 1, -width + 1, width - 1, width + 1];
+
+    for (let i = 0; i < n; i++) {
+      if (cls[i] !== 2 || visited[i]) continue;
+      let head = 0;
+      let tail = 0;
+      queue[tail++] = i;
+      visited[i] = 1;
+      let touchesFree = 0;
+      let touchesBorder = false;
+
+      while (head < tail) {
+        const cur = queue[head++];
+        const cx = cur % width;
+        const cy = (cur - cx) / width;
+        if (cx === 0 || cx === width - 1 || cy === 0 || cy === height - 1) {
+          touchesBorder = true;
+          continue;
+        }
+        for (let d = 0; d < 8; d++) {
+          const ni = cur + n8[d];
+          const nc = cls[ni];
+          if (nc === 2) {
+            if (!visited[ni]) {
+              visited[ni] = 1;
+              queue[tail++] = ni;
+            }
+          } else if (nc === 1) {
+            touchesFree++;
+          }
+        }
+      }
+
+      if (!touchesBorder && tail <= maxIslandPx && touchesFree >= Math.max(4, tail)) {
+        removedClusters++;
+        removedPixels += tail;
+        for (let k = 0; k < tail; k++) {
+          cls[queue[k]] = 1;
+        }
       }
     }
+
+    // Also seal tiny enclosed unknown holes (<= 14px) sitting completely inside free floor
+    visited.fill(0);
+    const n4 = [-1, 1, -width, width];
+    for (let i = 0; i < n; i++) {
+      if (cls[i] !== 0 || visited[i]) continue;
+      let head = 0;
+      let tail = 0;
+      queue[tail++] = i;
+      visited[i] = 1;
+      let enclosed = true;
+
+      while (head < tail) {
+        const cur = queue[head++];
+        const cx = cur % width;
+        const cy = (cur - cx) / width;
+        if (cx === 0 || cx === width - 1 || cy === 0 || cy === height - 1) {
+          enclosed = false;
+        } else {
+          for (let d = 0; d < 4; d++) {
+            const ni = cur + n4[d];
+            const nc = cls[ni];
+            if (nc === 0) {
+              if (!visited[ni]) {
+                visited[ni] = 1;
+                queue[tail++] = ni;
+              }
+            } else if (nc !== 1) {
+              enclosed = false;
+            }
+          }
+        }
+      }
+      if (enclosed && tail <= 14) {
+        for (let k = 0; k < tail; k++) cls[queue[k]] = 1;
+      }
+    }
+  }
+
+  // Stage 3: Manual Noise Eraser Strokes (converts occupied noise pixels inside brush radius to free)
+  for (const stroke of eraseStrokes) {
+    const pts = stroke?.pointsPx;
+    if (!Array.isArray(pts) || pts.length === 0) continue;
+    const radPx = Math.max(1.0, Number(stroke.radiusPx) || 6.0);
+    if (pts.length === 1) {
+      rasterizeSegmentCapsule(width, height, pts[0][0], pts[0][1], pts[0][0], pts[0][1], radPx, (idx) => {
+        if (cls[idx] === 2) {
+          cls[idx] = 1;
+          erasedPixels++;
+        }
+      });
+    } else {
+      for (let s = 1; s < pts.length; s++) {
+        rasterizeSegmentCapsule(width, height, pts[s - 1][0], pts[s - 1][1], pts[s][0], pts[s][1], radPx, (idx) => {
+          if (cls[idx] === 2) {
+            cls[idx] = 1;
+            erasedPixels++;
+          }
+        });
+      }
+    }
+  }
+
+  // Preserve physical SLAM occupancy (without software virtual walls) for faithful LiDAR raycasting & wall layer
+  const physicalCls = new Uint8Array(cls);
+
+  // Stage 4: Rasterize Nav2 Keepout Virtual Walls into navigation occupancy & dedicated mask
+  const virtualMask = new Uint8Array(n);
+  for (const vw of virtualWalls) {
+    if (!vw) continue;
+    const halfThickPx = Math.max(1.1, (Number(vw.thicknessPx) || 3.2) * 0.5);
+    rasterizeSegmentCapsule(width, height, vw.x1, vw.y1, vw.x2, vw.y2, halfThickPx, (idx) => {
+      if (!virtualMask[idx]) {
+        virtualMask[idx] = 1;
+        virtualWallPixels++;
+      }
+      cls[idx] = 2;
+    });
   }
 
   // Tight bounding box of explored cells
@@ -106,7 +283,39 @@ export function analyzeOccupancyGrid(rgba, width, height, resolution) {
     distM[i] = distPx[i] >= INF * 0.5 ? 99.0 : distPx[i] * res;
   }
 
-  return { width, height, resolution: res, cls, distM, bounds };
+  return {
+    width,
+    height,
+    resolution: res,
+    cls,
+    physicalCls,
+    virtualMask,
+    distM,
+    bounds,
+    stats: {
+      removedClusters,
+      removedPixels,
+      erasedPixels,
+      virtualWallPixels,
+    },
+  };
+}
+
+// Export standard ROS 2 map_server / Nav2 KeepoutFilter trinary grayscale RGBA buffer
+// (254=free, 205=unknown, 0=occupied including denoised walls + virtual walls)
+export function exportNav2OccupancyRgba(grid) {
+  const { width, height, cls } = grid;
+  const out = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0; i < width * height; i++) {
+    const c = cls[i];
+    const g = c === 2 ? 0 : c === 1 ? 254 : 205;
+    const p = i * 4;
+    out[p] = g;
+    out[p + 1] = g;
+    out[p + 2] = g;
+    out[p + 3] = 255;
+  }
+  return out;
 }
 
 export function queryCellInfo(grid, px, py) {
@@ -130,7 +339,8 @@ export function castLidarScan(grid, originPx, originPy, originYawRad, {
   maxRangeM = 12.0,
 } = {}) {
   if (!grid) return [];
-  const { width, height, resolution, cls } = grid;
+  const { width, height, resolution } = grid;
+  const cls = grid.physicalCls || grid.cls;
   const maxSteps = Math.min(400, Math.round(maxRangeM / resolution));
   const out = [];
   const stepPx = 1.0;

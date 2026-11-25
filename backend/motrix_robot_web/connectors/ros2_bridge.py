@@ -257,6 +257,8 @@ class Ros2BridgeConnector(RobotConnector):
                     ]
                     if self.descriptor.capabilities.navigation or self.config.odom_topic:
                         subs.append((self.config.odom_topic, "nav_msgs/msg/Odometry"))
+                    if self.descriptor.capabilities.navigation and self.config.nav_plan_topic:
+                        subs.append((self.config.nav_plan_topic, "nav_msgs/msg/Path"))
                     for topic, msg_type in subs:
                         if topic:
                             await ws.send(json.dumps({"op": "subscribe", "topic": topic, "type": msg_type}))
@@ -382,6 +384,25 @@ class Ros2BridgeConnector(RobotConnector):
                 "vy": round(_finite_float(lin.get("y")) or 0.0, 3),
                 "omega": round(_finite_float(ang.get("z")) or 0.0, 3),
             }
+
+        elif topic == self.config.nav_plan_topic:
+            poses = msg.get("poses") or []
+            if isinstance(poses, list) and poses:
+                step = max(1, len(poses) // 220)
+                pts: list[list[float]] = []
+                for idx in range(0, len(poses), step):
+                    p = ((poses[idx] or {}).get("pose") or {}).get("position") or {}
+                    px = _finite_float(p.get("x"))
+                    py = _finite_float(p.get("y"))
+                    if px is not None and py is not None:
+                        pts.append([round(px, 3), round(py, 3)])
+                if len(poses) > 1:
+                    last_p = ((poses[-1] or {}).get("pose") or {}).get("position") or {}
+                    lx, ly = _finite_float(last_p.get("x")), _finite_float(last_p.get("y"))
+                    if lx is not None and ly is not None and (not pts or pts[-1] != [round(lx, 3), round(ly, 3)]):
+                        pts.append([round(lx, 3), round(ly, 3)])
+                self._nav.path_points = pts
+                self._nav.path_source = "nav2_plan" if pts else ""
 
         elif topic == self.config.battery_topic:
             pct = _finite_float(msg.get("percentage")) or 0.0
@@ -588,7 +609,9 @@ class Ros2BridgeConnector(RobotConnector):
         self._nav.mode = mode  # type: ignore[assignment]
         return {"ok": True, "mode": mode}
 
-    def send_navigation_goal(self, x: float, y: float, yaw: float) -> dict[str, Any]:
+    def send_navigation_goal(
+        self, x: float, y: float, yaw: float, path_points: list[list[float]] | None = None
+    ) -> dict[str, Any]:
         self._require_writable("send_navigation_goal")
         msg = {
             "header": {"frame_id": "map"},
@@ -603,6 +626,8 @@ class Ros2BridgeConnector(RobotConnector):
 
     def cancel_navigation(self) -> dict[str, Any]:
         self._nav.goal_map = None
+        self._nav.path_points = []
+        self._nav.path_source = ""
         if not self.descriptor.readonly_only and self._connected:
             try:
                 self.send_chassis_velocity(0.0, 0.0, 0.0, 0.2)
@@ -643,4 +668,5 @@ class Ros2BridgeConnector(RobotConnector):
             "joint_cmd": f"PUB {self.config.joint_cmd_topic} ({self.config.joint_cmd_type})",
             "cmd_vel": f"PUB {self.config.cmd_vel_topic} (geometry_msgs/msg/Twist)",
             "nav_goal": f"PUB {self.config.nav_goal_topic} (geometry_msgs/msg/PoseStamped)",
+            "nav_plan": f"SUB {self.config.nav_plan_topic} (nav_msgs/msg/Path)",
         }

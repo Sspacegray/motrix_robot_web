@@ -489,29 +489,67 @@ class MockRobotConnector(RobotConnector):
             elif self._nav.mode == "NAVIGATION" and self._nav.goal_map:
                 px, py, pyaw = self._nav.pose_map["x"], self._nav.pose_map["y"], self._nav.pose_map["yaw"]
                 gx, gy, gyaw = self._nav.goal_map["x"], self._nav.goal_map["y"], self._nav.goal_map["yaw"]
-                dx, dy = gx - px, gy - py
-                dist = math.hypot(dx, dy)
-                dyaw = math.atan2(math.sin(gyaw - pyaw), math.cos(gyaw - pyaw))
-                pos_done = dist <= 0.04
-                yaw_done = abs(dyaw) <= 0.05
+                dx_g, dy_g = gx - px, gy - py
+                dist_g = math.hypot(dx_g, dy_g)
+                dyaw_g = math.atan2(math.sin(gyaw - pyaw), math.cos(gyaw - pyaw))
+                pos_done = dist_g <= 0.04 and len(self._nav.path_points) <= 2
+                yaw_done = abs(dyaw_g) <= 0.05
                 if pos_done and yaw_done:
                     self._nav.pose_map = {"x": round(gx, 4), "y": round(gy, 4), "yaw": round(gyaw, 4)}
                     self._nav.goal_map = None
                     self._nav.path_points = []
+                    self._nav.path_source = ""
                     self._nav.mode = "MANUAL"
                 else:
                     if not pos_done:
-                        step_d = min(dist, max(1.2, min(3.4, dist * 4.0)) * dt)
-                        self._nav.pose_map["x"] = round(px + (dx / dist) * step_d, 4)
-                        self._nav.pose_map["y"] = round(py + (dy / dist) * step_d, 4)
+                        # Follow multi-waypoint A* corridor polyline when provided (never cuts through walls!)
+                        remaining_step = max(1.6, min(3.6, max(dist_g, 0.8) * 3.8)) * dt
+                        cx, cy = px, py
+                        move_dx, move_dy = 0.0, 0.0
+                        if self._nav.path_points and len(self._nav.path_points) >= 2:
+                            pts = self._nav.path_points
+                            while remaining_step > 1e-4 and len(pts) >= 2:
+                                tx, ty = float(pts[1][0]), float(pts[1][1])
+                                seg_dx, seg_dy = tx - cx, ty - cy
+                                seg_d = math.hypot(seg_dx, seg_dy)
+                                if seg_d <= 1e-4:
+                                    pts.pop(0)
+                                    continue
+                                if seg_d <= remaining_step:
+                                    cx, cy = tx, ty
+                                    move_dx, move_dy = seg_dx, seg_dy
+                                    remaining_step -= seg_d
+                                    pts.pop(0)
+                                else:
+                                    ratio = remaining_step / seg_d
+                                    cx += seg_dx * ratio
+                                    cy += seg_dy * ratio
+                                    move_dx, move_dy = seg_dx, seg_dy
+                                    pts[0] = [round(cx, 3), round(cy, 3)]
+                                    remaining_step = 0.0
+                            self._nav.pose_map["x"] = round(cx, 4)
+                            self._nav.pose_map["y"] = round(cy, 4)
+                            if math.hypot(move_dx, move_dy) > 1e-3 and len(pts) > 2:
+                                desired_yaw = math.atan2(move_dy, move_dx)
+                                d_head = math.atan2(math.sin(desired_yaw - pyaw), math.cos(desired_yaw - pyaw))
+                                self._nav.pose_map["yaw"] = round(pyaw + max(-5.0 * dt, min(5.0 * dt, d_head)), 4)
+                            else:
+                                step_y = max(-4.8 * dt, min(4.8 * dt, dyaw_g))
+                                self._nav.pose_map["yaw"] = round(pyaw + step_y, 4)
+                        else:
+                            step_d = min(dist_g, remaining_step)
+                            self._nav.pose_map["x"] = round(px + (dx_g / max(dist_g, 1e-6)) * step_d, 4)
+                            self._nav.pose_map["y"] = round(py + (dy_g / max(dist_g, 1e-6)) * step_d, 4)
+                            step_y = max(-4.8 * dt, min(4.8 * dt, dyaw_g))
+                            self._nav.pose_map["yaw"] = round(pyaw + step_y, 4)
                     else:
                         self._nav.pose_map["x"] = round(gx, 4)
                         self._nav.pose_map["y"] = round(gy, 4)
-                    if not yaw_done:
-                        step_y = max(-4.8 * dt, min(4.8 * dt, dyaw))
-                        self._nav.pose_map["yaw"] = round(pyaw + step_y, 4)
-                    else:
-                        self._nav.pose_map["yaw"] = round(gyaw, 4)
+                        if not yaw_done:
+                            step_y = max(-4.8 * dt, min(4.8 * dt, dyaw_g))
+                            self._nav.pose_map["yaw"] = round(pyaw + step_y, 4)
+                        else:
+                            self._nav.pose_map["yaw"] = round(gyaw, 4)
             elif self._nav.mode == "MANUAL" and self._sim_time < self._chassis_cmd_until:
                 vx = self._nav.chassis_vel["vx"]
                 vy = self._nav.chassis_vel["vy"]
@@ -816,10 +854,13 @@ class MockRobotConnector(RobotConnector):
         if m == "MANUAL":
             self._nav.goal_map = None
             self._nav.path_points = []
+            self._nav.path_source = ""
         self._nav.mode = m  # type: ignore[assignment]
         return {"accepted": True, "mode": self._nav.mode}
 
-    def send_navigation_goal(self, x: float, y: float, yaw: float) -> dict[str, Any]:
+    def send_navigation_goal(
+        self, x: float, y: float, yaw: float, path_points: list[list[float]] | None = None
+    ) -> dict[str, Any]:
         if not self.descriptor.capabilities.navigation:
             raise SafetyError(400, "navigation_unsupported", f"{self.descriptor.name} 无移动底盘导航能力。")
         if self._nav.mode != "NAVIGATION":
@@ -828,19 +869,40 @@ class MockRobotConnector(RobotConnector):
             raise SafetyError(409, "nav_not_ready", "定位尚未就绪，拒绝下发导航目标。")
         self._nav.goal_map = {"x": round(x, 3), "y": round(y, 3), "yaw": round(yaw, 4)}
         px, py = self._nav.pose_map["x"], self._nav.pose_map["y"]
-        # Generate smooth curved waypoint preview
-        pts: list[list[float]] = []
-        for i in range(9):
-            t = i / 8.0
-            mx = px + (x - px) * t
-            my = py + (y - py) * t + 0.18 * math.sin(math.pi * t)
-            pts.append([round(mx, 3), round(my, 3)])
-        self._nav.path_points = pts
-        return {"accepted": True, "goal": self._nav.goal_map, "path_points": pts}
+
+        # Accept validated collision-free A* polyline when provided by planner
+        sanitized: list[list[float]] = []
+        if isinstance(path_points, list) and len(path_points) >= 2:
+            for item in path_points[:256]:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    fx, fy = float(item[0]), float(item[1])
+                    if math.isfinite(fx) and math.isfinite(fy):
+                        sanitized.append([round(fx, 3), round(fy, 3)])
+        if len(sanitized) >= 2:
+            sanitized[0] = [round(px, 3), round(py, 3)]
+            sanitized[-1] = [round(x, 3), round(y, 3)]
+            self._nav.path_points = sanitized
+            self._nav.path_source = "local_astar"
+        else:
+            pts: list[list[float]] = []
+            for i in range(9):
+                t = i / 8.0
+                mx = px + (x - px) * t
+                my = py + (y - py) * t + 0.18 * math.sin(math.pi * t)
+                pts.append([round(mx, 3), round(my, 3)])
+            self._nav.path_points = pts
+            self._nav.path_source = "mock_direct"
+        return {
+            "accepted": True,
+            "goal": self._nav.goal_map,
+            "path_points": self._nav.path_points,
+            "path_source": self._nav.path_source,
+        }
 
     def cancel_navigation(self) -> dict[str, Any]:
         self._nav.goal_map = None
         self._nav.path_points = []
+        self._nav.path_source = ""
         return {"accepted": True, "mode": self._nav.mode}
 
     def start_localization_spin(self, active: bool) -> dict[str, Any]:
